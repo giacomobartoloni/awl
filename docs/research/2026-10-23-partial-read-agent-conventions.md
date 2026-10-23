@@ -1,6 +1,6 @@
 # Partial Markdown Reads — Agent Tool Conventions and Proposed Contract
 
-**Status:** research and **proposed** product behavior; not owner-approved and not implemented.  
+**Status:** research with **owner-approved behavioral direction (2026-10-23)**; details still proposed; not implemented.  
 **Date:** 2026-10-23.  
 **Scope:** AgentWorklog CLI (awl), `document.read` only.  
 **Related:** [Document and Operation Contract](../requirements/document-operation-contract.md) · [Core Requirements](../requirements/core-requirements.md).
@@ -30,7 +30,7 @@ Research below documents **external tool behavior**. Recommendations for awl are
 
 Observed consensus: **read ranges using line coordinates**, show numbered positions, bound output, and make partial results explicit. No universal line/byte ceiling exists across tools.
 
-## 3. Recommended awl read contract (proposal, not approved)
+## 3. Recommended awl read contract (core behavior confirmed; schema not approved)
 
 ### 3.1 Scope and coordinate system
 
@@ -155,4 +155,4 @@ All test cases are **proposals**; none has been executed.
 | Fixed 2,000-line limit from OpenCode | Easy to copy | Defer quantitative limit to realistic file/model testing |
 | One long string with prefixed line numbers | Visually convenient | Presentational only; do not alter raw returned Markdown |
 
-**Recommended review gate:** approve or revise (a) full-file 1-based coordinate system including frontmatter, (b) optional snapshot-pinned ranges, and (c) explicit truncation/continuation semantics. Exact quotas and serialization can follow. No satellite execution or deployment decision is necessary.
+**Owner review outcome (2026-10-23): confirmed** (a) the full-file **1-based** coordinate system including frontmatter, (b) optional snapshot-pinned ranges, and (c) explicit truncation/continuation semantics. Numerical quotas, public field names/serialization, detailed long-line fallback and EOF edge cases remain **unselected**. No satellite execution or deployment decision is involved.
