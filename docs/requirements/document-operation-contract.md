@@ -375,6 +375,13 @@ Audit representation, retention, where failed requests are recorded, and whether
 | OP-AC-24 | A list pointer uses negative/leading-zero index | Reject without changing document | FR-05, FR-14 |
 | OP-AC-25 | Stale list index now addresses another element | Explicit conflict unless intended element/position can be verified | FR-05, FR-12 |
 | OP-AC-26 | YAML contains unsupported non-string keys/aliases/duplicate keys that cannot be preserved | Fail safely without changing content | FR-05, FR-13 |
+| OP-AC-27 | A document has four frontmatter lines and a read starts at line 5 | Returns physical file line 5, not body-relative line 5 | FR-04 |
+| OP-AC-28 | A second page requests the first page's revision after a new local commit | Same original document snapshot is used | FR-03, FR-04 |
+| OP-AC-29 | A requested read revision no longer exists | Explicit unavailable-revision error, never latest-head fallback | FR-04, FR-14 |
+| OP-AC-30 | An oversized whole-document read exceeds output budget | Clearly incomplete first page or actionable error, not silently full | FR-04 |
+| OP-AC-31 | One physical line exceeds the output cap | No unmarked partial text that looks exact | FR-04 |
+| OP-AC-32 | An existing empty document is read | Valid empty read, not DOCUMENT_NOT_FOUND | FR-04 |
+| OP-AC-33 | An excerpt includes frontmatter lines followed by a body edit | document.edit remains body-only | FR-05, FR-06 |
 
 These are **specification-level acceptance scenarios**, not implemented test results.
 
@@ -391,7 +398,7 @@ These are **specification-level acceptance scenarios**, not implemented test res
 ### Review next
 
 1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
-2. **Partial reads:** [research note](../research/2026-10-23-yaml-paths-and-partial-reads.md) documents line-based `offset`/`limit` practice in agent tools. Coordinate frame, truncation, pinning to a revision, indexing and response caps remain unselected.
+2. **Partial reads:** [comparative research](../research/2026-10-23-partial-read-agent-conventions.md) proposes **1-based absolute file lines including frontmatter**, explicit bounded ranges and pinned local revisions across pages. These remain **recommendations pending owner review**; numerical limits, wire schema and long-line fallback remain open.
 3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
 4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
 5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
