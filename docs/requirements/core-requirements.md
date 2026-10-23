@@ -44,7 +44,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-01 | Core | Discover locally configured accessible projects and resolve a project by its slug; reject ambiguous resolution. |
 | FR-02 | Core | Associate each project with a managed local Git replica and one authoritative Git remote; allow optional additional satellite integrations connected to the Git remote, not direct peer-to-peer remote replicas. |
 | FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
-| FR-04 | Core | Offer project-scoped listing, full document reads, creation, and modification through awl without requiring direct access to managed replica files. |
+| FR-04 | Core | Offer project-scoped listing, full document reads, creation, and modification through awl without direct access to managed replica files. Partial physical-file line reads with snapshot pinning are under proposal review. |
 | FR-05 | Core | Support generic, typed YAML-frontmatter reads and mutations using **RFC 6901 JSON Pointer** for single-node addressing. Distinguish replacement, insertion at a list index, append, and removal; preserve unknown keys and unaffected content and reject unverifiable stale positional list edits. |
 | FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
@@ -94,7 +94,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 
 ## 7. Architectural evaluation and open requirements
 
-See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), and [YAML path and partial-read research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
+See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), and [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), plus [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
 
 **Owner-selected architectural direction, not an implemented or merged design:**
 - One authoritative Git remote per project, with optional secondary integrations connected in a hub-and-spoke topology.
