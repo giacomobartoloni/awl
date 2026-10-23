@@ -79,6 +79,18 @@ A structured segment array is a defensible second choice for typed programmatic 
 - YAML tag, aliases/anchors, duplicate keys and comments need explicit round-trip expectations and failure modes.
 - Do not quietly reinterpret an existing literal key with a dot as a path.
 
+## 3a. Outcome after owner review (2026-10-23)
+
+**Selected from this research:** JSON Pointer (RFC 6901) is the canonical YAML-frontmatter single-target locator in the proposed awl operation contract. Dot syntax is not an equivalent second address dialect. The method names and serialization details remain subject to review.
+
+Distinct mutation semantics are also selected: read; replace a value (never implicitly insert into a list); insert at a zero-based list position; append to a list; remove one mapping key or list element. A list insertion or removal shifts subsequent indexes.
+
+**Safety policy:** when another writer has changed the relevant list, a positional write must verify the intended element/position or return a conflict. A surviving numeric pointer does not prove element identity. An expected scalar alone may be inadequate in a list containing duplicates. There is no automatic relocation by matching content.
+
+**Still open:** exact precondition representation and stale-list verification, map-leaf creation semantics, formatting-preserving YAML library behavior, alias/tag/non-string-key support and final command names. Partial-read investigation in section 4 remains exploratory and **unselected**.
+
+See the [revised operation contract](../requirements/document-operation-contract.md) for examples and acceptance scenarios.
+
 ## 4. Partial-read conventions in agent tools
 
 ### Observed established convention
