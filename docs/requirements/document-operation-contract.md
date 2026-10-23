@@ -3,7 +3,7 @@
 **Status:** draft functional specification for review, **not an approved command/API schema**.  
 **Date:** 2026-10-23.  
 **Product:** AgentWorklog CLI (awl).  
-**Related:** [Core Requirements](core-requirements.md) · [Git Hub-and-Spoke Architecture Evaluation](../architecture/2026-10-23-local-first-storage-evaluation.md).  
+**Related:** [Core Requirements](core-requirements.md) · [Git Hub-and-Spoke Architecture Evaluation](../architecture/2026-10-23-local-first-storage-evaluation.md) · [YAML paths and partial reads research](../research/2026-10-23-yaml-paths-and-partial-reads.md).  
 **Provenance:** The user's 2026-10-23 product discussion about LLM-agent edit tools, composite operations, local-first Git persistence, and a central remote Git hub.
 
 ## 1. Objective
@@ -20,6 +20,7 @@ This document proposes a **logical contract**. Operation identifiers and JSON/YA
 - Client writes go through awl's operations rather than directly changing managed local files. This is a supported API boundary, not an OS-level security guarantee.
 - awl supports individual and **composite** document/metadata operations with per-operation outcomes and audit correlation. Global multi-document transactionality or rollback is not required.
 - A successful local operation must be distinguishable from remote Git publication and optional satellite propagation.
+- **Owner-selected decisions (2026-10-23):** body-only text edits; safely applicable exact edits may proceed despite stale read revisions; composites continue on member errors; one local Git content commit per request that results in changes.
 - User-owned content and legacy links/frontmatter are not implicitly migrated or normalized.
 
 ### Explicitly not specified here
@@ -50,21 +51,21 @@ This table describes **behavioral operations**, not finalized public method name
 
 | Candidate operation | Input concept | Success result | Important failure |
 | --- | --- | --- | --- |
-| \`project.list\` | Optional selection constraints | Accessible configured project descriptors | Project/config access problem |
-| \`document.list\` | Project slug, optional relative prefix | Document paths and optional revisions | Unknown project, invalid prefix |
-| \`document.read\` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
-| \`document.create\` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
-| \`document.edit\` | Project slug, existing path, ordered targeted textual edits | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe stale edit |
-| \`metadata.get\` | Project slug, path, optional key | Typed frontmatter value(s) + document revision | Missing document; malformed/ambiguous YAML |
-| \`metadata.set\` | Project slug, path, metadata key and typed YAML value | Updated local revision | Invalid key/value, parsing failure |
-| \`metadata.remove\` | Project slug, path, metadata key | Updated local revision or explicit no-change result | Parsing failure; missing-key behavior TBD |
-| \`composite.apply\` | Project slug, ordered operations with IDs | Per-operation outcomes + request-level summary | Partial completion is reportable, never silent |
-| \`operation.status\` / \`project.sync_status\` | Request ID or project slug | Audit and local/remote progress | Unknown request, unavailable status |
-| \`document.history\` | Project slug, document path | Relevant local history identifiers | Missing document/history unavailable |
+| `project.list` | Optional selection constraints | Accessible configured project descriptors | Project/config access problem |
+| `document.list` | Project slug, optional relative prefix | Document paths and optional revisions | Unknown project, invalid prefix |
+| `document.read` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
+| `document.create` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
+| `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe stale edit |
+| `metadata.get` | Project slug, path, optional key | Typed frontmatter value(s) + document revision | Missing document; malformed/ambiguous YAML |
+| `metadata.set` | Project slug, path, metadata key and typed YAML value | Updated local revision | Invalid key/value, parsing failure |
+| `metadata.remove` | Project slug, path, metadata key | Updated local revision or explicit no-change result | Parsing failure; missing-key behavior TBD |
+| `composite.apply` | Project slug, ordered operations with IDs | Continue-on-error with per-operation outcomes + one resulting Git content commit when content changed | Partial completion is reportable, never silent |
+| `operation.status` / `project.sync_status` | Request ID or project slug | Audit and local/remote progress | Unknown request, unavailable status |
+| `document.history` | Project slug, document path | Relevant local history identifiers | Missing document/history unavailable |
 
 All writes require a local Git-backed project state; offline writes **must not require remote network availability** once the project has been initialized locally.
 
-**Later / unselected:** unified-diff or Codex-style \`apply_patch\`, context/hunk matching, hashline editing, a semantic Markdown-section editor, metadata query, content search, document moves/deletes and higher-level worklog lifecycle operations. Do not imply these are implemented or forbidden forever.
+**Later / unselected:** unified-diff or Codex-style `apply_patch`, context/hunk matching, hashline editing, a semantic Markdown-section editor, metadata query, content search, document moves/deletes and higher-level worklog lifecycle operations. Do not imply these are implemented or forbidden forever.
 
 ## 4. Request and response concepts
 
@@ -122,19 +123,17 @@ Example successful local response (illustrative values and serialization):
 }
 ~~~
 
-\`applied\` means **durably accepted locally**; it is not shorthand for Git push, Google Drive export, or semantic validation.
+`applied` means **durably accepted locally**; it is not shorthand for Git push, Google Drive export, or semantic validation.
 
 ### Revision visibility
 
-A read returns the local revision used to produce its content. A later write may refer to that revision. The exact protocol is open:
+A read returns the local revision used to produce its content. Later writes may refer to that revision.
 
-- **Strict conditional update** may require the revision to be unchanged.
-- **Target-based update** may still safely succeed after unrelated changes when the target text matches uniquely.
-- **Rebase/three-way merge** might be supported in a later iteration if the base snapshot remains available.
+**Selected policy for body editing:** a stale `base_revision` does **not by itself** force failure or a reread. The exact target must be uniquely found in the **current Markdown body**, and awl must be able to establish that applying the requested replacement is safe. Otherwise return `TARGET_NOT_FOUND`, `AMBIGUOUS_MATCH` or `REVISION_CONFLICT`. No fuzzy matching or blind last-writer-wins fallback.
 
-For the initial candidate \`document.edit\`, use *exact target match on the current local document with unique occurrence* as the suggested minimal safety rule; a differing \`base_revision\` alone does not necessarily force a second read. If application cannot be shown safe, return a conflict/error, optionally including bounded refreshed context. No fuzzy approximation is silently applied.
+The exact safety condition for "still safely applicable" needs focused design and tests; simple string uniqueness does not prove semantic correctness. Strict revision preconditions could be an optional mode, while contextual patch/rebase/three-way merge remains deferred.
 
-The precise semantics of strict preconditions, retained base revisions, automatic retries and concurrent writes must be defined in a focused design stage; this document does **not** promise automatic rebasing.
+This stale-body-edit policy must not be presumed safe for all metadata edits, particularly numeric indexes into changed YAML sequences.
 
 ## 5. Reading documents
 
@@ -153,21 +152,20 @@ Reading an existing legacy document must not modify its YAML, links or line endi
 
 ## 6. Targeted document editing
 
-### Candidate minimal editing contract
+**Owner-selected scope: `document.edit` modifies only the Markdown body.** YAML frontmatter can be changed only with structured `metadata.*` operations.
 
-An edit describes a **precise replacement** using \`old_string\` and \`new_string\`, comparable to common coding-agent Edit tools.
+A candidate minimal editing operation describes ordered `old_string` → `new_string` replacements, inspired by coding-agent Edit tools. The public wire schema remains a proposal.
 
-Proposed behavior for a sequence of edits on one document:
+Proposed single-operation behavior:
 
-1. Load the current local document state through awl's managed API.
-2. Evaluate each replacement in declared order against the result of preceding replacements.
-3. A normal \`old_string\` must match **exactly one** occurrence in the targeted text; zero matches => \`TARGET_NOT_FOUND\`; multiple => \`AMBIGUOUS_MATCH\`.
-4. A candidate \`replace_all\` opt-in may explicitly permit multiple identical targets; absent that opt-in, do not silently choose the nearest occurrence.
-5. Reject or clearly report an unsafe patch. Do not approximate a match with fuzzy algorithms by default.
-6. Only publish a valid completed result for this one \`document.edit\` operation as a new local Git-backed revision; do not expose truncated or partially written document bytes.
-7. Return per-edit diagnostics on failure, especially the failing edit index; the exact diagnostic shape is to be specified.
+1. Load a working copy of the current local Markdown document and identify the body boundary without altering frontmatter.
+2. Apply each declared replacement in order against the working body only.
+3. By default each `old_string` must match exactly **one** body occurrence; zero matches => `TARGET_NOT_FOUND`; multiple => `AMBIGUOUS_MATCH`. A possible opt-in `replace_all` is not yet approved.
+4. If one replacement fails, the entire **individual `document.edit` operation** is unsuccessful and contributes no modification to the request's staged state. Earlier independent operations in the same request remain eligible to commit.
+5. If all replacements succeed, stage the complete resulting document for **the request's single eventual local Git commit**. No partial-document write or unrelated frontmatter normalization is acceptable.
+6. Return per-edit diagnostics identifying the failing edit index, and optionally bounded current body context so an agent need not issue a full reread.
 
-Illustrative operation:
+Example (illustrative):
 
 ~~~yaml
 id: finish-outcome
@@ -181,38 +179,15 @@ edits:
     new_string: "## Follow-up\nNo further action required."
 ~~~
 
-**Open: frontmatter scope.** Decide whether \`document.edit\` edits the full raw Markdown (including frontmatter), body-only Markdown by default, or requires an explicit region; structured \`metadata.*\` is the preferred operation for YAML changes because it preserves typed values. A string edit must not silently trigger worklog lifecycle logic.
+The old revision can be stale, but the current body target must still be safely and uniquely applicable. An edit matching text **only inside frontmatter** is reported as missing; it must never edit YAML by accident.
 
-### Avoiding unnecessary rereads
-
-One proposed recovery outcome for a failed edit is an error with the current local revision and **bounded** surrounding text or candidate context:
-
-~~~json
-{
-  "status": "failed",
-  "code": "TARGET_NOT_FOUND",
-  "path": "Activities/example.md",
-  "current_revision": "rev-example-3",
-  "edit_index": 0,
-  "context": "## Outcome\nVerification was completed by another contributor."
-}
-~~~
-
-Context must come from the actual current state, not a guess. This helps an agent revise an edit without necessarily issuing another full \`read\`, but semantic conflicts still require agent judgment. Context inclusion must respect size limits and access permissions.
-
-### Candidate richer patch mechanisms (deferred)
-
-- Unified diff with line-number hints plus textual context.
-- Contextual hunk relocation and exact-match anchors.
-- Line/hash anchors supplied with \`document.read\`.
-- Three-way merge using an available base revision.
-- Fuzzy search only with a rigorously specified safety policy; **not** a default auto-correction.
-
-None is required by the minimal exact-edit behavior.
+**Deferred:** context-aware unified diffs, line/hash anchors, three-way merge, strict-conditional mode syntax and permitted automatic retries. Body/frontmatter boundary detection for malformed documents still requires a documented policy.
 
 ## 7. Generic frontmatter metadata
 
-Treat metadata as **arbitrary YAML data**: do not interpret \`type\`, \`status\`, \`workflow-status\`, or custom keys as workflow commands.
+Treat metadata as **arbitrary YAML data**: do not interpret `type`, `status`, `workflow-status`, or custom keys as workflow commands. Structured metadata operations are the **only** supported way to mutate frontmatter.
+
+**Nested-path notation is open.** [Research](../research/2026-10-23-yaml-paths-and-partial-reads.md) compares dot paths (yq), RFC 6901 JSON Pointer, RFC 9535 JSONPath, typed segment arrays and RFC 6902 JSON Patch. JSON Pointer is the current recommendation for a **single-node locator**, not yet a settled command syntax. Examples below use top-level `key` for simplicity.
 
 Candidate input:
 
@@ -235,9 +210,9 @@ key: obsolete-field
 
 Minimum behavior:
 
-- \`metadata.get\` returns parsed values without a lossy string-only transformation.
-- \`metadata.set\` accepts typed YAML-compatible values (including objects, lists, booleans, numbers and \`null\`, if supported by the selected YAML subset).
-- \`metadata.remove\` removes the key; it must be distinguishable from setting the value to YAML \`null\`.
+- `metadata.get` returns parsed values without a lossy string-only transformation.
+- `metadata.set` accepts typed YAML-compatible values (including objects, lists, booleans, numbers and `null`, if supported by the selected YAML subset).
+- `metadata.remove` removes the key; it must be distinguishable from setting the value to YAML `null`.
 - Unknown fields survive unrelated changes. Body content, ordinary links and unrelated metadata must not be intentionally rewritten or normalized.
 - Duplicate YAML keys, aliases, comments, malformed frontmatter and nested-path semantics need an explicit policy rather than silent data loss.
 - Metadata mutation must fail safely on content it cannot interpret or preserve reliably.
@@ -245,7 +220,15 @@ Minimum behavior:
 
 ## 8. Composite requests
 
-A composite is **one request containing ordered, heterogeneous operations**. It is not a workflow engine.
+A composite is **one request containing ordered, heterogeneous operations**; it is not a workflow engine.
+
+**Owner-selected execution policy: continue after each operation failure.** Every operation is attempted in declared order unless a request-level fatal error prevents further execution. Later operations observe successfully staged earlier changes, even when an intermediate operation fails. A failed operation contributes **no** partial modification of its own.
+
+**Owner-selected commit granularity: one local Git content commit per request.** If at least one operation produces a valid content change, all successful staged changes are represented by **one** local Git commit after processing the request. If all operations fail or produce no changes, no empty content commit is required; the outcomes still need auditable representation.
+
+This is not an ACID transaction mechanism and does not require rollback across separately accepted requests. If final Git persistence fails, **none** of the staged operations may be reported as durably `applied`; a failure/uncertain outcome must be returned with recoverable diagnostics. The handling of interruption and retry IDs remains open.
+
+Example request:
 
 ~~~yaml
 project: muse
@@ -256,14 +239,12 @@ operations:
     path: Activities/example.md
     key: workflow-status
     value: completed
-
   - id: edit-outcome
     op: document.edit
     path: Activities/example.md
     edits:
       - old_string: "Pending verification."
         new_string: "Implementation completed."
-
   - id: create-follow-up
     op: document.create
     path: Plans/next-phase.md
@@ -271,18 +252,7 @@ operations:
       # Next Phase
 ~~~
 
-Required observable behavior:
-
-- Operations are **logically ordered** as supplied. Later operations see earlier successfully applied changes to the same document.
-- Each operation receives an individual result linked by its operation ID.
-- If an operation fails, awl must explicitly identify what was applied earlier, what failed, and what was not executed (if any).
-- A composite **must not imply a multi-document/global transaction or automatic rollback**.
-- Partial completion is an acceptable reported outcome, but silent loss of accepted local changes is not.
-- One operation such as \`document.edit\` with multiple replacements is a **document-level unit**; a composite may span many such units.
-
-**Not yet chosen:** stop-on-error versus continue-on-error; dependency references between operations; retry/idempotency policy; exact Git commit grouping (per operation, per document or per request). Do not silently imply one default in the public contract.
-
-An illustrative *partial* result:
+Example of a **partial** outcome assuming `edit-outcome` failed but other operations succeeded:
 
 ~~~json
 {
@@ -291,13 +261,15 @@ An illustrative *partial* result:
   "operations": [
     {"id": "update-status", "status": "applied"},
     {"id": "edit-outcome", "status": "failed", "code": "TARGET_NOT_FOUND"},
-    {"id": "create-follow-up", "status": "not_executed"}
+    {"id": "create-follow-up", "status": "applied"}
   ],
   "git_publication": "pending"
 }
 ~~~
 
-This example depicts a stop-on-error run **only to demonstrate reporting**; the failure policy remains a design decision. For individual failures no local change from that individual operation is represented as applied; earlier completed operations may remain committed.
+**Exactly one local Git content commit** contains the successful status change and new follow-up document. The audit still records the failed edit. Operation identity and errors must not be inferred from the Git diff alone.
+
+**Open:** request deduplication/idempotency, error categories that justify aborting an entire request, explicit dependencies between operations, and storage of failures when there is no Git content commit.
 
 ## 9. Error vocabulary and safety
 
@@ -305,18 +277,18 @@ Proposed error categories (names subject to interface review):
 
 | Code | Meaning | Required safety consequence |
 | --- | --- | --- |
-| \`PROJECT_NOT_FOUND\` | Project slug cannot be resolved | No mutation |
-| \`INVALID_PATH\` | Path escapes or is outside configured project scope | No mutation |
-| \`DOCUMENT_NOT_FOUND\` | Requested existing document is absent | No mutation |
-| \`DOCUMENT_EXISTS\` | Create target already exists | No overwrite |
-| \`INVALID_METADATA\` | YAML cannot be parsed or changed safely | No affected-document mutation |
-| \`TARGET_NOT_FOUND\` | Exact edit target absent | No affected-operation mutation |
-| \`AMBIGUOUS_MATCH\` | Exact target occurs more than allowed | No affected-operation mutation |
-| \`REVISION_CONFLICT\` | Revision or patch intent cannot safely be reconciled | No silent replacement |
-| \`PERMISSION_DENIED\` | Operation outside authorized scope | No mutation |
-| \`LOCAL_PERSISTENCE_FAILED\` | Git commit/state durability cannot be confirmed | No reported success; state may need recovery |
-| \`REMOTE_PUBLICATION_FAILED\` | Central Git publication did not succeed | Local commit remains visible and pending; local success must not be rewritten as failure |
-| \`UNKNOWN_OUTCOME\` | A requested action's final state cannot be determined safely | Expose uncertainty and allow inspection; never retry destructively without checks |
+| `PROJECT_NOT_FOUND` | Project slug cannot be resolved | No mutation |
+| `INVALID_PATH` | Path escapes or is outside configured project scope | No mutation |
+| `DOCUMENT_NOT_FOUND` | Requested existing document is absent | No mutation |
+| `DOCUMENT_EXISTS` | Create target already exists | No overwrite |
+| `INVALID_METADATA` | YAML cannot be parsed or changed safely | No affected-document mutation |
+| `TARGET_NOT_FOUND` | Exact edit target absent | No affected-operation mutation |
+| `AMBIGUOUS_MATCH` | Exact target occurs more than allowed | No affected-operation mutation |
+| `REVISION_CONFLICT` | Revision or patch intent cannot safely be reconciled | No silent replacement |
+| `PERMISSION_DENIED` | Operation outside authorized scope | No mutation |
+| `LOCAL_PERSISTENCE_FAILED` | Git commit/state durability cannot be confirmed | No reported success; state may need recovery |
+| `REMOTE_PUBLICATION_FAILED` | Central Git publication did not succeed | Local commit remains visible and pending; local success must not be rewritten as failure |
+| `UNKNOWN_OUTCOME` | A requested action's final state cannot be determined safely | Expose uncertainty and allow inspection; never retry destructively without checks |
 
 Each error should include project/path/operation identifiers where known and safe to disclose. The mapping to process exit codes, stderr, JSON output and later remote-tool errors remains to be designed.
 
@@ -338,41 +310,51 @@ Audit representation, retention, where failed requests are recorded, and whether
 | ID | Given / when | Observable expectation | Source requirement |
 | --- | --- | --- | --- |
 | OP-AC-01 | A known document is read offline | Content and its opaque local revision are returned | FR-03, FR-04 |
-| OP-AC-02 | A create targets an existing path | Explicit \`DOCUMENT_EXISTS\`; existing bytes unchanged | FR-04, FR-13 |
+| OP-AC-02 | A create targets an existing path | Explicit `DOCUMENT_EXISTS`; existing bytes unchanged | FR-04, FR-13 |
 | OP-AC-03 | An exact edit target appears once | Edit produces a durable new local revision | FR-06, FR-09 |
 | OP-AC-04 | An exact edit target occurs twice | Explicit ambiguity; no arbitrary occurrence chosen | FR-06, FR-14 |
-| OP-AC-05 | Several edits are submitted in one \`document.edit\` and one fails | No partially written document; failed edit is identified | FR-07, NFR-01 |
+| OP-AC-05 | Several edits are submitted in one `document.edit` and one fails | No partially written document; failed edit is identified | FR-07, NFR-01 |
 | OP-AC-06 | A document has arbitrary, unknown YAML keys | An unrelated metadata update preserves them and body text | FR-05, FR-16 |
 | OP-AC-07 | An existing legacy document is read | No implicit migration of frontmatter or wikilinks | FR-13 |
-| OP-AC-08 | A composite applies one change and fails later | Per-operation applied/failed/not-executed results; no promised rollback | FR-08, FR-17 |
+| OP-AC-08 | A composite's middle operation fails while its last operation can run | Later operation still executes; results identify the applied and failed members | FR-08, FR-17 |
 | OP-AC-09 | A local edit succeeds offline | The result says locally applied with Git publication pending | FR-09, FR-11 |
 | OP-AC-10 | A remote push fails after local success | The durable local change is still discoverable and publication failure is visible | FR-11, FR-12 |
-| OP-AC-11 | An edit based on an older read has a unique exact target in current content | Target-based application is a valid *candidate* behavior without forcing a full reread; detailed precondition policy TBD | FR-06, FR-12 |
+| OP-AC-11 | A stale-base body edit still has a uniquely and safely applicable exact target | May apply without forcing a full reread; no fuzzy or silent overwrite | FR-06, FR-12 |
 | OP-AC-12 | Metadata YAML is malformed | The metadata operation fails without silently normalizing/replacing it | FR-05, FR-14 |
-| OP-AC-13 | A composite's first operation changes a file and a later one uses it | Later operation sees previously applied local document state | FR-08 |
+| OP-AC-13 | A composite's first operation changes a file and a later one uses it | Later operation sees staged successful state; one final Git content commit records resulting changes | FR-08 |
 | OP-AC-14 | An agent attempts to modify an out-of-project path | Operation denied; no arbitrary filesystem write | FR-15 |
+| OP-AC-15 | A request includes two successful document changes and one failed operation | One local Git content commit includes both changes; every result is audited | FR-08, FR-09, FR-10 |
+| OP-AC-16 | A request changes nothing or its only operation fails | No content commit is necessary; audit reports the outcome | FR-08, FR-10 |
+| OP-AC-17 | An edit target appears only inside frontmatter | `document.edit` fails without modifying frontmatter | FR-05, FR-06 |
 
 These are **specification-level acceptance scenarios**, not implemented test results.
 
 ## 12. Open design questions and review gates
 
-**Review first (affects interface behavior):**
-1. What is the default target scope for \`document.edit\`: body-only, full Markdown, or explicit region?
-2. Should a patch's stale \`base_revision\` be advisory when an exact unique target still exists, or should there be an explicit strict-precondition mode?
-3. Which composite failure policy is the safest default: stop or continue? Which operation outcome statuses are canonical?
-4. What is the unit of local commit publication for multiple edits to one document and for composites?
-5. Which excerpt/range syntax should \`document.read\` expose for agent efficiency?
-6. How will \`metadata.set\` address nested keys and preserve formatting, comments and types?
+### Decisions recorded from the project owner
 
-**Defer (does not block this functional draft):**
-- Patch context/line/hash anchor algorithms, three-way merge/rebase and automatic retries.
-- Git library/hosting, local object-store layout, Git ref/branch convention, sync scheduling.
-- Connector direction and execution environment (explicitly deferred by the owner).
-- Sharing/verifying audit across multiple clients and transport-specific identity.
-- Exact CLI flags, response serialization, MCP tools, validators, search/indexing, migrations.
+1. `document.edit` changes the Markdown **body only**.
+2. An obsolete read revision may still yield a safe exact-target body edit without forcing a new read.
+3. Composite execution **continues** after member errors, reporting each outcome.
+4. One Git **content commit per request** records all successful changes.
+
+### Review next
+
+1. **Nested YAML paths:** [research note](../research/2026-10-23-yaml-paths-and-partial-reads.md) recommends JSON Pointer as a candidate canonical single-target locator. Dot notation, typed segments, and JSONPath are alternatives; YAML edge cases remain open.
+2. **Partial reads:** [research note](../research/2026-10-23-yaml-paths-and-partial-reads.md) documents line-based `offset`/`limit` practice in agent tools. Coordinate frame, truncation, pinning to a revision, indexing and response caps remain unselected.
+3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
+4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
+5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
+
+### Explicitly defer
+
+- Git library, Git internals, push cadence, hosting, and branch/ref conventions.
+- Connector execution/deployment location, satellite direction and sync infrastructure.
+- Contextual patches, hashline anchors, three-way merge/rebase.
+- Search/query engines, mandatory validation, migration of legacy Markdown, and later MCP/public CLI syntax.
 
 ## 13. Status and next step
 
 This document is a proposal added to an **unmerged GitHub draft PR**, not an approved operation specification. It narrows the interface discussion without locking implementation choices.
 
-**Suggested next task:** Review the six interface-impacting questions above, select the narrowest initial editing/composite semantics, and then define a small Git-backed vertical implementation plan. No code or tests are claimed by this document.
+**Suggested next task:** Review nested YAML path options and agent-oriented partial-read behavior before a small Git-backed vertical implementation plan. No code or tests are claimed by this document.
