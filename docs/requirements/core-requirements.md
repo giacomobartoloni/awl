@@ -94,7 +94,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 
 ## 7. Architectural evaluation and open requirements
 
-See [Local-first architecture options](../architecture/2026-10-23-local-first-storage-evaluation.md).
+See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md) and the [draft document and operation contract](document-operation-contract.md).
 
 **Owner-selected architectural direction, not an implemented or merged design:**
 - One authoritative Git remote per project, with optional secondary integrations connected in a hub-and-spoke topology.
