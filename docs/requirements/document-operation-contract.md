@@ -56,9 +56,10 @@ This table describes **behavioral operations**, not finalized public method name
 | `document.read` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
 | `document.create` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
 | `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe stale edit |
-| `metadata.get` | Project slug, path, optional key | Typed frontmatter value(s) + document revision | Missing document; malformed/ambiguous YAML |
-| `metadata.set` | Project slug, path, metadata key and typed YAML value | Updated local revision | Invalid key/value, parsing failure |
-| `metadata.remove` | Project slug, path, metadata key | Updated local revision or explicit no-change result | Parsing failure; missing-key behavior TBD |
+| `metadata.get` | Project slug, path, JSON Pointer | Typed frontmatter value + document revision | Missing target; malformed/ambiguous YAML |
+| `metadata.set` | Project slug, path, JSON Pointer and typed YAML value | Replace existing value, never implicit list insertion | Missing target, unsafe index, parsing failure |
+| `metadata.remove` | Project slug, path, JSON Pointer | Remove map entry or list element (shifts later indexes) | Unverifiable stale position, malformed YAML |
+| `metadata.insert` / `metadata.append` | Existing YAML sequence pointer; explicit index for insert | Insert and shift, or append one value | Invalid/unsafe index, missing list, conflict |
 | `composite.apply` | Project slug, ordered operations with IDs | Continue-on-error with per-operation outcomes + one resulting Git content commit when content changed | Partial completion is reportable, never silent |
 | `operation.status` / `project.sync_status` | Request ID or project slug | Audit and local/remote progress | Unknown request, unavailable status |
 | `document.history` | Project slug, document path | Relevant local history identifiers | Missing document/history unavailable |
@@ -187,7 +188,7 @@ The old revision can be stale, but the current body target must still be safely 
 
 Treat metadata as **arbitrary YAML data**: do not interpret `type`, `status`, `workflow-status`, or custom keys as workflow commands. Structured metadata operations are the **only** supported way to mutate frontmatter.
 
-**Nested-path notation is open.** [Research](../research/2026-10-23-yaml-paths-and-partial-reads.md) compares dot paths (yq), RFC 6901 JSON Pointer, RFC 9535 JSONPath, typed segment arrays and RFC 6902 JSON Patch. JSON Pointer is the current recommendation for a **single-node locator**, not yet a settled command syntax. Examples below use top-level `key` for simplicity.
+**Selected path standard:** [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901.html), for nested or top-level YAML fields. Other notations were evaluated in the [research](../research/2026-10-23-yaml-paths-and-partial-reads.md), but are not co-equal APIs. Parameter names and serialization below remain illustrative.
 
 Candidate input:
 
@@ -195,7 +196,7 @@ Candidate input:
 id: complete-activity
 op: metadata.set
 path: Activities/example.md
-key: workflow-status
+pointer: /workflow-status
 value: completed
 ~~~
 
@@ -205,7 +206,7 @@ And removal:
 id: remove-obsolete-key
 op: metadata.remove
 path: Activities/example.md
-key: obsolete-field
+pointer: /obsolete-field
 ~~~
 
 Minimum behavior:
@@ -220,16 +221,16 @@ Minimum behavior:
 
 ### 7.1 Selected YAML address notation and list safety (2026-10-23)
 
-**Owner-selected:** RFC 6901 JSON Pointer is the **canonical** frontmatter locator. The \`path\` of a request identifies a Markdown file; \`pointer\` identifies one nested frontmatter value. Example: \`/reviewers/0/roles/1\` addresses an item within a nested list; \`/matrix/1/1\` addresses a list-of-lists element.
+**Owner-selected:** RFC 6901 JSON Pointer is the **canonical** frontmatter locator. The `path` of a request identifies a Markdown file; `pointer` identifies one nested frontmatter value. Example: `/reviewers/0/roles/1` addresses an item within a nested list; `/matrix/1/1` addresses a list-of-lists element.
 
-Pointers traverse maps by **literal string keys** and arrays by **zero-based indices**. \`/build.version\` differs from \`/build/version\`. Escapes are \`~0\` for literal \`~\` and \`~1\` for literal \`/\`; \`/external~1id\` addresses key \`external/id\`. Array index tokens must not be negative or have leading zeros. The empty pointer \`""\` refers to the root; \`"/"\` addresses an empty-string key. \`/-\` is not a readable array element. The initial mutation subset is string-keyed YAML mappings and sequences, with unsupported YAML-specific structures reported rather than silently rewritten.
+Pointers traverse maps by **literal string keys** and arrays by **zero-based indices**. `/build.version` differs from `/build/version`. Escapes are `~0` for literal `~` and `~1` for literal `/`; `/external~1id` addresses key `external/id`. Array index tokens must not be negative or have leading zeros. The empty pointer `""` refers to the root; `"/"` addresses an empty-string key. `/-` is not a readable array element. The initial mutation subset is string-keyed YAML mappings and sequences, with unsupported YAML-specific structures reported rather than silently rewritten.
 
 **Distinct mutation behaviors**, with final public method names still under review:
-- \`metadata.get\`: return typed value at a pointer.
-- \`metadata.set\`: **replace** one existing array element or mapping value (possible map-leaf upsert remains to be specified), **never insert** an array element implicitly.
-- \`metadata.insert\`: insert a value into an existing sequence at an explicit zero-based \`index\`, shifting later elements.
-- \`metadata.append\`: append one value to an existing sequence, without overloading \`/-\` in \`metadata.set\`.
-- \`metadata.remove\`: remove a mapping key or a sequence element; later sequence indices shift left. This differs from setting YAML \`null\`.
+- `metadata.get`: return typed value at a pointer.
+- `metadata.set`: **replace** one existing array element or mapping value (possible map-leaf upsert remains to be specified), **never insert** an array element implicitly.
+- `metadata.insert`: insert a value into an existing sequence at an explicit zero-based `index`, shifting later elements.
+- `metadata.append`: append one value to an existing sequence, without overloading `/-` in `metadata.set`.
+- `metadata.remove`: remove a mapping key or a sequence element; later sequence indices shift left. This differs from setting YAML `null`.
 
 Illustrative insertion:
 
@@ -241,7 +242,7 @@ index: 1
 value: {name: Charlie, roles: [reviewer]}
 ~~~
 
-**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. For stale positional writes, require a verifiable revision or a sufficiently strong explicit precondition that identifies the intended element/position; otherwise return \`REVISION_CONFLICT\`. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. The relaxed stale exact-target behavior of body edits does not extend automatically to indexed metadata writes.
+**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. For stale positional writes, require a verifiable revision or a sufficiently strong explicit precondition that identifies the intended element/position; otherwise return `REVISION_CONFLICT`. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. The relaxed stale exact-target behavior of body edits does not extend automatically to indexed metadata writes.
 
 **Open details:** exact public syntax, absent map-leaf behavior, expected/precondition representation, root replacement, missing-key removal, YAML tags/aliases/anchors/non-string keys and formatting-preserving serialization. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md). This selects a path standard and safety principle, **not** an implementation library or full JSON Patch semantics.
 
@@ -353,6 +354,15 @@ Audit representation, retention, where failed requests are recorded, and whether
 | OP-AC-15 | A request includes two successful document changes and one failed operation | One local Git content commit includes both changes; every result is audited | FR-08, FR-09, FR-10 |
 | OP-AC-16 | A request changes nothing or its only operation fails | No content commit is necessary; audit reports the outcome | FR-08, FR-10 |
 | OP-AC-17 | An edit target appears only inside frontmatter | `document.edit` fails without modifying frontmatter | FR-05, FR-06 |
+| OP-AC-18 | Frontmatter has a literal `build.version` key and a nested `build.version` field | `/build.version` and `/build/version` address different targets | FR-05, FR-16 |
+| OP-AC-19 | A YAML key contains `/` | `/external~1id` addresses literal `external/id` | FR-05 |
+| OP-AC-20 | Nested sequence contains `matrix[1][1]` | `metadata.set` at `/matrix/1/1` replaces one value without shifting | FR-05 |
+| OP-AC-21 | A list insert is requested at index 1 | Inserted element appears at 1; prior elements shift right | FR-05 |
+| OP-AC-22 | A list append is requested | One new element appears at the end | FR-05 |
+| OP-AC-23 | An element is removed from a sequence | Exactly one element disappears and later indexes shift left | FR-05 |
+| OP-AC-24 | A list pointer uses negative/leading-zero index | Reject without changing document | FR-05, FR-14 |
+| OP-AC-25 | Stale list index now addresses another element | Explicit conflict unless intended element/position can be verified | FR-05, FR-12 |
+| OP-AC-26 | YAML contains unsupported non-string keys/aliases/duplicate keys that cannot be preserved | Fail safely without changing content | FR-05, FR-13 |
 
 These are **specification-level acceptance scenarios**, not implemented test results.
 
@@ -364,10 +374,11 @@ These are **specification-level acceptance scenarios**, not implemented test res
 2. An obsolete read revision may still yield a safe exact-target body edit without forcing a new read.
 3. Composite execution **continues** after member errors, reporting each outcome.
 4. One Git **content commit per request** records all successful changes.
+5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
 
 ### Review next
 
-1. **Nested YAML paths:** [research note](../research/2026-10-23-yaml-paths-and-partial-reads.md) recommends JSON Pointer as a candidate canonical single-target locator. Dot notation, typed segments, and JSONPath are alternatives; YAML edge cases remain open.
+1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
 2. **Partial reads:** [research note](../research/2026-10-23-yaml-paths-and-partial-reads.md) documents line-based `offset`/`limit` practice in agent tools. Coordinate frame, truncation, pinning to a revision, indexing and response caps remain unselected.
 3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
 4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
