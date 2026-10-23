@@ -93,6 +93,9 @@ See the [revised operation contract](../requirements/document-operation-contract
 
 ## 4. Partial-read conventions in agent tools
 
+**Later follow-up:** See [the dedicated comparative study and proposed 1-based full-file range contract](2026-10-23-partial-read-agent-conventions.md). This section preserves the earlier exploratory findings; the recommended coordinate system is still pending owner review.
+
+
 ### Observed established convention
 
 The OpenCode `read` tool takes a file `path` and optional `offset` and `limit`, describes offsets as starting at a **line**, and outputs **numbered lines**. Its currently published documentation states a maximum of **2,000 lines and 50 KiB per page**, with individual overlong lines shortened. These are observations about one tool, **not recommended hard limits for awl**.
