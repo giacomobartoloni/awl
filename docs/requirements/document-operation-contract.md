@@ -138,18 +138,30 @@ This stale-body-edit policy must not be presumed safe for all metadata edits, pa
 
 ## 5. Reading documents
 
-A read should return:
+**Proposed for review (not yet owner-approved):** [Research on agent partial reads](../research/2026-10-23-partial-read-agent-conventions.md) recommends one coordinate system: **1-based, physical-file lines**, including YAML frontmatter and delimiter lines. Reading the full original Markdown does not change the previously approved **body-only** edit scope. A read line number is a navigation hint, never edit authority.
 
-- The content being read (full document or explicitly requested excerpt).
-- The corresponding **local document revision**.
-- The project/path identifying that content.
-- An indicator that content comes from local state, not a guarantee that the Git remote is current.
+- `document.read` without a range asks for the full raw Markdown. An optional range uses positive, inclusive `start_line` and positive `max_lines`, counting absolute file lines.
+- An optional opaque `revision` pins the read to an available local Git snapshot. If omitted, return the actual revision used; if explicitly requested and unavailable, fail with `REVISION_UNAVAILABLE` rather than silently reading the latest.
+- Paging should return the **same revision** and `next_start_line` for a subsequent read, ensuring that commits made between calls never mix content from different snapshots.
+- Return original text, preserving line endings; any displayed line numbers are metadata/presentation, not additional bytes in the document.
+- Bound reads by both lines and response size; an oversized whole-file read may yield a **clearly marked partial page**. No truncated response may masquerade as a complete read.
 
-Optional bounded reads are desirable for agent token efficiency, but the choice of **line-, byte- or character-based ranges**, base index (0 or 1), and whether returned line numbers are included must be specified before shipping that feature. Do not silently mix indexing schemes.
+Illustrative request (not a fixed CLI schema):
 
-If an agent receives line numbers or anchors, these can be used as *hints* for later edits; line number alone is not a safe stale-write precondition.
+~~~yaml
+op: document.read
+path: Activities/example.md
+revision: rev-example-7
+range:
+  start_line: 120
+  max_lines: 80
+~~~
 
-Reading an existing legacy document must not modify its YAML, links or line endings.
+Illustrative response fields: `revision`, `content`, `coordinate_system: full_file`, `first_line`, `last_line`, `lines_returned`, `total_lines`, `complete`, `has_more`, `next_start_line` and an optional `truncation.reason`. **`complete` describes the requested range**, whereas `has_more` describes remaining lines in the file; both can be true.
+
+An empty existing document returns a valid empty read. A range beyond EOF should report `LINE_RANGE_OUT_OF_BOUNDS` with available line count. A physical line too long for the result budget must be explicitly flagged or rejected (`LINE_TOO_LONG`) rather than silently shortened and presented as exact text. Define CRLF/LF, trailing newline, and boundary behavior through tests.
+
+**Still open:** final input/output names, maximum line/byte/token counts, long-line fallback, exact EOF semantics and whether to offer a separately named body-only view. Reading must not mutate content or trigger Git publication or satellite synchronization.
 
 ## 6. Targeted document editing
 
