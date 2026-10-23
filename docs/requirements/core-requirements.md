@@ -44,7 +44,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-01 | Core | Discover locally configured accessible projects and resolve a project by its slug; reject ambiguous resolution. |
 | FR-02 | Core | Associate each project with a managed local Git replica and one authoritative Git remote; allow optional additional satellite integrations connected to the Git remote, not direct peer-to-peer remote replicas. |
 | FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
-| FR-04 | Core | Offer project-scoped listing, full document reads, creation, and modification through awl without direct access to managed replica files. Partial physical-file line reads with snapshot pinning are under proposal review. |
+| FR-04 | Core | Offer project-scoped listing, full and bounded document reads, creation and modification through awl without direct access to managed replica files. **Approved read behavior:** 1-based absolute physical-file line coordinates including frontmatter, optional pinned local Git revision across pages, and explicit truncation/continuation. Quantitative limits and public syntax remain open. |
 | FR-05 | Core | Support generic, typed YAML-frontmatter reads and mutations using **RFC 6901 JSON Pointer** for single-node addressing. Distinguish replacement, insertion at a list index, append, and removal; preserve unknown keys and unaffected content and reject unverifiable stale positional list edits. |
 | FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
@@ -92,7 +92,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | AC-10 | Attempt direct modification outside project scope. | Operation is rejected, and authorization boundaries are enforced where technically possible. |
 | AC-11 | Configure a Google Drive satellite for a Git-backed project and project an accepted Git revision. | The integration reports its own projection progress and failures without changing the authoritative Git revision; reverse ingestion is not presumed. |
 
-Partial-read candidate acceptance: AC-12 — full-file lines include frontmatter; AC-13 — stable revision across pages; AC-14 — explicit incomplete/truncated result on a size limit. Pending owner review.
+Owner-confirmed partial-read acceptance direction: AC-12 — 1-based full-file lines include frontmatter; AC-13 — an optional pinned local revision stays stable across pages; AC-14 — explicit incomplete/truncated result with continuation information on a size limit. Exact limits, public fields and long-line fallback remain to be designed.
 
 ## 7. Architectural evaluation and open requirements
 
@@ -111,11 +111,11 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
 - Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
-- Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, read range convention, and whether context, three-way merge or line/hash anchors are used.
+- Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, and whether context, three-way merge or line/hash anchors are used. Read coordinate/revision behavior is selected; quantitative bounds and error edge cases are still open.
 - Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
 - Credentials, security model, actor identity, sharing, and key lifecycle.
 - Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
-- Public names/schema for JSON Pointer-based metadata operations, indexed-list preconditions, YAML formatting/alias preservation; read-range coordinate conventions and whether the CLI itself is initially the only interface.
+- Public names/schema for JSON Pointer-based metadata operations, indexed-list preconditions and YAML formatting/alias preservation; read response serialization and quantitative bounds (the read coordinate model is approved); whether the CLI is initially the only interface.
 - Local snapshot lifecycle, retention, garbage collection, portability and backup.
 
 ## 8. Compatibility and migration
