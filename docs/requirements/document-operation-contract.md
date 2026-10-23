@@ -138,13 +138,13 @@ This stale-body-edit policy must not be presumed safe for all metadata edits, pa
 
 ## 5. Reading documents
 
-**Proposed for review (not yet owner-approved):** [Research on agent partial reads](../research/2026-10-23-partial-read-agent-conventions.md) recommends one coordinate system: **1-based, physical-file lines**, including YAML frontmatter and delimiter lines. Reading the full original Markdown does not change the previously approved **body-only** edit scope. A read line number is a navigation hint, never edit authority.
+**Owner-approved read behavior (2026-10-23):** [Research on agent partial reads](../research/2026-10-23-partial-read-agent-conventions.md) informed the chosen coordinate system: **1-based physical-file lines**, including YAML frontmatter and delimiter lines. Reading the full original Markdown does not change the previously approved **body-only** edit scope. A read line number is a navigation hint, never edit authority.
 
 - `document.read` without a range asks for the full raw Markdown. An optional range uses positive, inclusive `start_line` and positive `max_lines`, counting absolute file lines.
 - An optional opaque `revision` pins the read to an available local Git snapshot. If omitted, return the actual revision used; if explicitly requested and unavailable, fail with `REVISION_UNAVAILABLE` rather than silently reading the latest.
 - Paging should return the **same revision** and `next_start_line` for a subsequent read, ensuring that commits made between calls never mix content from different snapshots.
 - Return original text, preserving line endings; any displayed line numbers are metadata/presentation, not additional bytes in the document.
-- Bound reads by both lines and response size; an oversized whole-file read may yield a **clearly marked partial page**. No truncated response may masquerade as a complete read.
+- **Approved behavior:** bounded reads and explicit incompleteness/continuation, never silent truncation. The specific numerical output limits and chosen CLI field names remain open.
 
 Illustrative request (not a fixed CLI schema):
 
@@ -161,7 +161,7 @@ Illustrative response fields: `revision`, `content`, `coordinate_system: full_fi
 
 An empty existing document returns a valid empty read. A range beyond EOF should report `LINE_RANGE_OUT_OF_BOUNDS` with available line count. A physical line too long for the result budget must be explicitly flagged or rejected (`LINE_TOO_LONG`) rather than silently shortened and presented as exact text. Define CRLF/LF, trailing newline, and boundary behavior through tests.
 
-**Still open:** final input/output names, maximum line/byte/token counts, long-line fallback, exact EOF semantics and whether to offer a separately named body-only view. Reading must not mutate content or trigger Git publication or satellite synchronization.
+**Still open (implementation-level details):** final input/output names, maximum line/byte/token counts, long-line fallback, exact EOF semantics and whether to offer a separately named body-only view. Reading must not mutate content or trigger Git publication or satellite synchronization.
 
 ## 6. Targeted document editing
 
@@ -394,11 +394,12 @@ These are **specification-level acceptance scenarios**, not implemented test res
 3. Composite execution **continues** after member errors, reporting each outcome.
 4. One Git **content commit per request** records all successful changes.
 5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
+6. `document.read` uses **1-based absolute file lines including frontmatter**, supports an **optional pinned local revision** across pages, and **reports incompleteness/continuation explicitly**.
 
 ### Review next
 
 1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
-2. **Partial reads:** [comparative research](../research/2026-10-23-partial-read-agent-conventions.md) proposes **1-based absolute file lines including frontmatter**, explicit bounded ranges and pinned local revisions across pages. These remain **recommendations pending owner review**; numerical limits, wire schema and long-line fallback remain open.
+2. **Partial reads:** the owner accepted the **1-based absolute-file coordinate system (including frontmatter)**, optional revision-pinned continuation and explicit truncation/continuation semantics. [Comparative research](../research/2026-10-23-partial-read-agent-conventions.md). Numerical limits, public command/wire syntax and long-line fallback remain open.
 3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
 4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
 5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
