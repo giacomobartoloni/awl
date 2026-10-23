@@ -19,7 +19,7 @@ Provide a project-oriented, offline-first interface for reading and editing Mark
 - OKF lifecycle status (draft, stable, deprecated) is distinct from the AgentWorklog extension workflow-status. No implicit mapping.
 - Standard Markdown links are preferred for new links. Existing Obsidian links require a separately authorized migration.
 - Document types and custom metadata keys have no fixed domain semantics in the CLI core. No Activity, Spec, Plan, or ProductPlan lifecycle commands are required.
-- Single requests and composites may include multiple document and metadata operations. Composites need ordered, individually reported results, not global atomicity or rollback.
+- Single requests and composites may include multiple document and metadata operations. Composites run operations in order, **continue after member errors**, and report every outcome. **One local Git content commit per request with successful modifications** records the resulting changes; no multi-request/distributed rollback requirement is implied.
 - Every applied change is associated with an auditable request/operation identity. Git commits may provide version history but do not by themselves capture attempted/failed operations or prove caller identity. Shared or tamper-resistant audit remains open.
 - No metadata query engine, shared _research/_guides handling, mandatory server, or synchronization daemon is assumed for the initial slice.
 
@@ -46,9 +46,9 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
 | FR-04 | Core | Offer project-scoped listing, full document reads, creation, and modification through awl without requiring direct access to managed replica files. |
 | FR-05 | Core | Allow generic frontmatter reads and typed metadata set, remove, and grouped changes; preserve unknown keys and unaffected content. |
-| FR-06 | Core | Support content editing operations usable by LLM agents, including exact targeted replacement with explicit ambiguity/failure results. The final patch protocol is not yet selected. |
+| FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
-| FR-08 | Core | Support a composite containing multiple document and metadata operations, with per-operation outcomes and a request-level correlation identifier. |
+| FR-08 | Core | Support ordered composites that **continue after individual operation failures**, reporting every outcome and a request-level correlation identifier. Commit successfully applied changes once per request when content changes. |
 | FR-09 | Core | Preserve locally accepted modifications in managed Git durably across restarts; do not silently discard changes awaiting publication to the authoritative Git remote. |
 | FR-10 | Core | Record an auditable history of attempted and applied operations and their outcomes, including actor information as available; do not treat ordinary Git commits as a complete audit of failures, partial requests, or authenticated identity. |
 | FR-11 | Core | Support exchange of local Git commits and shared history with the project's authoritative Git remote, distinguishing locally committed changes from remotely accepted changes. Satellite synchronization behavior is separately scoped. |
@@ -83,8 +83,8 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | AC-01 | Configure two slugged projects with different authoritative remote Git repositories. | Each project resolves to its own local managed Git state and corresponding Git hub without conflating histories. |
 | AC-02 | Disconnect after initial synchronization and read a known document. | Its local Git version remains readable; Git hub publication/freshness limits are exposed. |
 | AC-03 | Modify a known document while offline; restart awl before reconnecting. | Change and its audit record survive; synchronization remains pending. |
-| AC-04 | Send multiple edits for one document. | The returned result identifies which requested edits were applied and what revision was produced; the document is never silently corrupted. |
-| AC-05 | Run a composite across several documents and cause one operation to fail. | Per-operation results identify applied, failed, and unexecuted operations; no global rollback is promised. |
+| AC-04 | Send multiple body-only edits for one document, including a stale-base edit with a safe exact unique match. | The resulting document retains frontmatter unchanged; safe edits can apply without forced reread, and ambiguous/unsafe ones return explicit errors. |
+| AC-05 | Run a composite across several documents and cause its middle operation to fail. | Later operations still execute; all operation results are reported; one local Git commit contains the successful changes, if any. |
 | AC-06 | Exchange commits after offline changes and new authoritative Git commits. | The shared Git history is reconciled or an explicit conflict is returned; no silent overwrite. Detailed rules remain open. |
 | AC-07 | Edit arbitrary nested YAML metadata without changing document body. | Metadata and unrelated content are retained; unsupported or ambiguous YAML is reported. |
 | AC-08 | Read legacy AgentWorklog Markdown with wikilinks and old status conventions. | Reads do not trigger implicit migration or normalization. |
@@ -94,7 +94,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 
 ## 7. Architectural evaluation and open requirements
 
-See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md) and the [draft document and operation contract](document-operation-contract.md).
+See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), and [YAML path and partial-read research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
 
 **Owner-selected architectural direction, not an implemented or merged design:**
 - One authoritative Git remote per project, with optional secondary integrations connected in a hub-and-spoke topology.
@@ -108,12 +108,12 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Git remote publication and scheduling, initial clone/bootstrap, partial history, and separate satellite projection semantics and freshness.
 - Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
-- Composite failure policy and precise document-level edit atomicity.
-- Base-revision/read identity and patch semantics; whether context, three-way merge or line/hash anchors are used.
+- Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
+- Detailed stale-edit safety criteria, strict optional preconditions, read range convention, and whether context, three-way merge or line/hash anchors are used.
 - Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
 - Credentials, security model, actor identity, sharing, and key lifecycle.
 - Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
-- Whether the CLI itself is the initial only interface; format/conformance strictness.
+- Nested YAML path syntax, read-range coordinate conventions, formatting preservation, and whether the CLI itself is initially the only interface.
 - Local snapshot lifecycle, retention, garbage collection, portability and backup.
 
 ## 8. Compatibility and migration
