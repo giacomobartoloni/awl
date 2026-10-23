@@ -92,6 +92,8 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | AC-10 | Attempt direct modification outside project scope. | Operation is rejected, and authorization boundaries are enforced where technically possible. |
 | AC-11 | Configure a Google Drive satellite for a Git-backed project and project an accepted Git revision. | The integration reports its own projection progress and failures without changing the authoritative Git revision; reverse ingestion is not presumed. |
 
+Partial-read candidate acceptance: AC-12 — full-file lines include frontmatter; AC-13 — stable revision across pages; AC-14 — explicit incomplete/truncated result on a size limit. Pending owner review.
+
 ## 7. Architectural evaluation and open requirements
 
 See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), and [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), plus [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
