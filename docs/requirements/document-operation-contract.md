@@ -218,6 +218,33 @@ Minimum behavior:
 - Metadata mutation must fail safely on content it cannot interpret or preserve reliably.
 - Whether missing frontmatter is created automatically and whether a missing removal target is a no-op or error remain open.
 
+### 7.1 Selected YAML address notation and list safety (2026-10-23)
+
+**Owner-selected:** RFC 6901 JSON Pointer is the **canonical** frontmatter locator. The \`path\` of a request identifies a Markdown file; \`pointer\` identifies one nested frontmatter value. Example: \`/reviewers/0/roles/1\` addresses an item within a nested list; \`/matrix/1/1\` addresses a list-of-lists element.
+
+Pointers traverse maps by **literal string keys** and arrays by **zero-based indices**. \`/build.version\` differs from \`/build/version\`. Escapes are \`~0\` for literal \`~\` and \`~1\` for literal \`/\`; \`/external~1id\` addresses key \`external/id\`. Array index tokens must not be negative or have leading zeros. The empty pointer \`""\` refers to the root; \`"/"\` addresses an empty-string key. \`/-\` is not a readable array element. The initial mutation subset is string-keyed YAML mappings and sequences, with unsupported YAML-specific structures reported rather than silently rewritten.
+
+**Distinct mutation behaviors**, with final public method names still under review:
+- \`metadata.get\`: return typed value at a pointer.
+- \`metadata.set\`: **replace** one existing array element or mapping value (possible map-leaf upsert remains to be specified), **never insert** an array element implicitly.
+- \`metadata.insert\`: insert a value into an existing sequence at an explicit zero-based \`index\`, shifting later elements.
+- \`metadata.append\`: append one value to an existing sequence, without overloading \`/-\` in \`metadata.set\`.
+- \`metadata.remove\`: remove a mapping key or a sequence element; later sequence indices shift left. This differs from setting YAML \`null\`.
+
+Illustrative insertion:
+
+~~~yaml
+op: metadata.insert
+path: Activities/example.md
+pointer: /reviewers
+index: 1
+value: {name: Charlie, roles: [reviewer]}
+~~~
+
+**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. For stale positional writes, require a verifiable revision or a sufficiently strong explicit precondition that identifies the intended element/position; otherwise return \`REVISION_CONFLICT\`. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. The relaxed stale exact-target behavior of body edits does not extend automatically to indexed metadata writes.
+
+**Open details:** exact public syntax, absent map-leaf behavior, expected/precondition representation, root replacement, missing-key removal, YAML tags/aliases/anchors/non-string keys and formatting-preserving serialization. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md). This selects a path standard and safety principle, **not** an implementation library or full JSON Patch semantics.
+
 ## 8. Composite requests
 
 A composite is **one request containing ordered, heterogeneous operations**; it is not a workflow engine.
