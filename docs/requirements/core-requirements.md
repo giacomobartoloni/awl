@@ -45,7 +45,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-02 | Core | Associate each project with a managed local Git replica and one authoritative Git remote; allow optional additional satellite integrations connected to the Git remote, not direct peer-to-peer remote replicas. |
 | FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
 | FR-04 | Core | Offer project-scoped listing, full document reads, creation, and modification through awl without requiring direct access to managed replica files. |
-| FR-05 | Core | Allow generic frontmatter reads and typed metadata set, remove, and grouped changes; preserve unknown keys and unaffected content. |
+| FR-05 | Core | Support generic, typed YAML-frontmatter reads and mutations using **RFC 6901 JSON Pointer** for single-node addressing. Distinguish replacement, insertion at a list index, append, and removal; preserve unknown keys and unaffected content and reject unverifiable stale positional list edits. |
 | FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
 | FR-08 | Core | Support ordered composites that **continue after individual operation failures**, reporting every outcome and a request-level correlation identifier. Commit successfully applied changes once per request when content changes. |
@@ -86,7 +86,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | AC-04 | Send multiple body-only edits for one document, including a stale-base edit with a safe exact unique match. | The resulting document retains frontmatter unchanged; safe edits can apply without forced reread, and ambiguous/unsafe ones return explicit errors. |
 | AC-05 | Run a composite across several documents and cause its middle operation to fail. | Later operations still execute; all operation results are reported; one local Git commit contains the successful changes, if any. |
 | AC-06 | Exchange commits after offline changes and new authoritative Git commits. | The shared Git history is reconciled or an explicit conflict is returned; no silent overwrite. Detailed rules remain open. |
-| AC-07 | Edit arbitrary nested YAML metadata without changing document body. | Metadata and unrelated content are retained; unsupported or ambiguous YAML is reported. |
+| AC-07 | Edit nested YAML metadata through JSON Pointer, including objects and nested lists, without changing the body. | Pointer escaping and zero-based indexes resolve precisely; replacement never inserts; array insert/append/remove and unsafe stale-position conflicts are explicitly handled without rewriting unrelated content. |
 | AC-08 | Read legacy AgentWorklog Markdown with wikilinks and old status conventions. | Reads do not trigger implicit migration or normalization. |
 | AC-09 | Access audit and sync status for a composite. | Caller can distinguish local Git commit, authoritative Git publication, and optional satellite propagation. |
 | AC-10 | Attempt direct modification outside project scope. | Operation is rejected, and authorization boundaries are enforced where technically possible. |
@@ -109,11 +109,11 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
 - Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
-- Detailed stale-edit safety criteria, strict optional preconditions, read range convention, and whether context, three-way merge or line/hash anchors are used.
+- Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, read range convention, and whether context, three-way merge or line/hash anchors are used.
 - Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
 - Credentials, security model, actor identity, sharing, and key lifecycle.
 - Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
-- Nested YAML path syntax, read-range coordinate conventions, formatting preservation, and whether the CLI itself is initially the only interface.
+- Public names/schema for JSON Pointer-based metadata operations, indexed-list preconditions, YAML formatting/alias preservation; read-range coordinate conventions and whether the CLI itself is initially the only interface.
 - Local snapshot lifecycle, retention, garbage collection, portability and backup.
 
 ## 8. Compatibility and migration
