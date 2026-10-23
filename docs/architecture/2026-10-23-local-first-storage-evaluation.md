@@ -1,144 +1,143 @@
-# Local-first Storage and Synchronization — Architecture Evaluation
+# Local-first Git Hub and Satellite Integrations — Architecture Evaluation
 
-**Status:** exploratory proposal; **no architecture or dependency approved**.  
+**Status:** draft architectural direction selected by the project owner; details unapproved and unimplemented.  
 **Date:** 2026-10-23.  
-**Scope:** Architecture of the AgentWorklog CLI (awl), not the existing Markdown worklog system.  
-**Related draft requirements:** [Core Requirements](../requirements/core-requirements.md).
+**Scope:** AgentWorklog CLI (awl), not a change to existing Markdown worklog conventions.  
+**Related requirements:** [Proposed Core Requirements](../requirements/core-requirements.md).
 
-## 1. Question
+## 1. Architectural direction and provenance
 
-How should awl preserve and edit offline Markdown documents, maintain an auditable operation history, and synchronize changes with **one configured remote backend per project**, initially considering Git and Google Drive, while avoiding unnecessary service infrastructure and strong multi-document transactions?
+The owner selected this topology after considering two previous alternatives: (A) a local persistence engine with Git or Google Drive as interchangeable remote backends, and (B) an embedded Git engine versus a custom snapshot/journal engine.
 
-Key constraints from the product discussion:
+**Current direction:**
+- awl uses **managed local Git** for offline document revisions and history;
+- each project has **one authoritative remote Git repository** (or a defined project scope within such a repository; layout remains open);
+- synchronization between local Git and the central remote Git provides the primary exchange of work;
+- **optional satellite integrations** (Google Drive first candidate; other backends later) connect to the authoritative remote Git hub, not directly to every local replica or to each other;
+- clients interact with awl's controlled document, metadata and composite operation API, not with writable managed repository files.
 
-- Project identity is a slug; it need not match a repository name or folder.
-- Clients read and edit through awl operations; the local replica is managed state, not a public editing interface.
-- Document bodies remain Markdown and frontmatter remains arbitrary YAML, with future conventions oriented toward OKF v0.2.
-- Editing operations are inspired by agent read/edit/patch tools; an operation may edit text and metadata.
-- One request may contain a composite of ordered operations and can have partial outcomes; no global ACID/rollback guarantee.
-- Local operation success must be distinguishable from the later synchronization result.
-- Audit needs caller intent and operation outcomes as well as document diffs.
-- The user explicitly deferred edge-case enumeration, concurrency algorithms and library selection.
+This **supersedes** the earlier proposal of "one remote backend per project, either Git or Google Drive." Instead: one authoritative **Git** remote per project **plus zero or more secondary integrations**. The satellites do not become co-equal authorities merely by being connected.
+
+The owner has not selected Git library/runtime, hosting provider, commit layout, branch strategy, audit-storage mechanism, synchronization scheduler, merge policy, bidirectionality of satellite integrations, or required deployment services. No implementation is claimed.
 
 ## 2. Logical architecture
 
 ~~~text
-CLI / future MCP
-       |
-Operation API (projects, documents, metadata, composites)
-       |
-Application processor -- audit records
-       |
-Local state interface (documents, versions, pending changes)
-       |
-Sync coordinator (reconciliation policy not yet specified)
-       |
-Remote adapter boundary
-      / \
- Git adapter     Google Drive adapter
+Humans / coding agents / future MCP
+                |
+          awl operations
+          (read, edit, metadata,
+           composite, audit)
+                |
+         Managed local Git
+         (offline commits/history)
+                |
+          Git fetch/push
+                |
+        Authoritative Git remote
+          /        |         \
+    [adapter]  [adapter]   [adapter]
+        |         |           |
+   Google Drive  Other     Future systems
 ~~~
 
-These are **logical responsibilities**, not required processes, packages or deployment units.
+The final three arrows are **logical integration relationships**, not a promise of bidirectional, real-time or synchronous replication. A satellite can initially be an export-only projection; ingesting external satellite edits requires a separately defined policy.
 
-### Application layer
+The diagram describes logical responsibilities; a central awl service, custom Git server, daemon, monorepo, or mandatory public working tree is **not** implied.
 
-1. Resolve project slug and validate project-relative paths.
-2. Convert individual CLI actions and composite requests into the same set of document/metadata operations.
-3. Apply edits to a proposed document state, collect per-operation results, and publish the resulting local state according to explicit failure semantics.
-4. Record request identity, caller/actor information available to the process, intended operations, failures, applied changes, and resulting local revision(s).
-5. Never infer or enforce Activity, Plan or Spec lifecycle rules.
+### awl application API
 
-### Local persistence boundary
+- Resolve project slug and authorization context.
+- Read project-relative Markdown, manage arbitrary YAML-frontmatter metadata, and support editing operations inspired by LLM-agent edit/patch tools.
+- Accept multiple ordered operations in a composite; report individual success, failure and nonexecution without promising global transactions.
+- Record operation intent, actor information actually known, resulting Git revisions and local/sync outcomes. Git commits alone do not capture failed requests, verified identities or all partial composite results.
+- Persist managed Git state privately where possible, without allowing direct filesystem edits as part of the supported API. OS-level tamper resistance is **not** established merely by hiding files.
 
-Potential duties: store current document bytes, revision references and historical snapshots sufficient for editing and later synchronization; store pending local changes and progress markers; preserve audit records across restart.
+### Managed local Git
 
-The local format is **not selected**. Hiding a storage directory from the API does not by itself prevent same-user processes from modifying physical files; any claim of tamper-resistant audit would require a separate threat model.
+- Records local document versions while offline; locally acknowledged changes must survive restart.
+- Can provide content-addressed trees, commits, history and established diff/merge primitives.
+- May use low-level Git objects or a private worktree; the internal layout and Git library/process invocation are open.
+- Maintains or links to operation audit records as necessary. Per-composite commit granularity, audit durability and failure behavior require decisions.
+- Does not expose an agent-editable working directory as the supported persistence interface.
 
-### Sync coordinator and remote adapters
+### Central remote Git
 
-The sync coordinator can own project-level scheduling, state transitions and reporting, but should not pretend all providers have Git's history or Drive's metadata.
+- Acts as the **authoritative shared history**, defining the baseline from which clients and satellite integrations synchronize.
+- Can be hosted by a Git provider or other compatible Git remote; selection, credential model, reference/branch rules and authorization are open.
+- Is not necessarily the same repository used for source code: source repository and worklog repository can remain independent.
+- Cannot guarantee tamper-proof audit without appropriate remote controls; commit author data is not verified identity.
+- Local offline commits and successfully shared commits are distinct states.
 
-A useful abstract boundary may expose remote inventory, content retrieval, version state, writing, and provider capabilities. Whether it should be this general or instead allow materially different sync strategies is an **architecture investigation**, not an assumed interface.
+### Satellite integration boundary
 
-**Git remote**: a repository containing versioned trees/commits and refs; synchronization may transport commit history with Git protocols if the local engine is Git-backed. If not, an adapter must produce or consume Git revisions and map them to awl document revisions.
+- Consumes remote Git revisions and projects the selected Markdown tree (or subset) into the external system, subject to access controls.
+- Tracks mapping to external file IDs and revisions and its own progress/checkpoint state; exactly-once remote side effects cannot be assumed.
+- Does not require every external provider to support Git commit graphs.
+- Needs explicit handling of the inverse direction **if** external edits are to flow back toward Git. Automatic Drive → Git import must not be assumed.
+- Integration failure must not silently roll back or corrupt the authoritative Git history.
 
-**Google Drive remote**: a hierarchy of Markdown files, file IDs, provider metadata/revisions and a changes feed. It does not natively understand commits or awl audit events. A Drive adapter needs a mapping between project-relative paths, file identity and sync baselines; it cannot assume Drive revision history is a permanent audit ledger.
+## 3. Topology consequences
 
-An awl project uses **one** such remote backend. The local replica is not a second user-configurable remote.
-
-## 3. Candidate local persistence mechanisms
-
-| Criterion | A — Embedded Git repository | B — Managed snapshots + journal | C — CRDT (e.g., Automerge) |
-| --- | --- | --- | --- |
-| Offline local changes | Native commits/local repository | Explicit stored snapshots and append-only operation journal | Native local CRDT updates |
-| History/diffs | Mature Git object model and diff tools | Must select/store versions and diff/merge mechanisms | CRDT change history |
-| API-controlled edits | Possible without exposing a working tree, subject to implementation | Natural boundary for private snapshots | Natural if CRDT is only written through awl |
-| Application audit of failed/partial requests | Separate operation log required | Natural journal candidate | Separate application-level log required |
-| Git remote | Can reuse native Git transport/ref model | Requires projection to/from Git commits | Requires Git projection, including CRDT metadata problem |
-| Google Drive remote | Requires document projection and revision mapping | Requires document projection and revision mapping | Requires document projection; remote Markdown alone loses causal metadata |
-| Concurrent merge | Git three-way merge and conflict handling | Need diff/merge library or chosen policy | CRDT convergence among compatible replicas; not semantic correctness |
-| Portability of remote Markdown | Natural | Natural | Requires careful Markdown projection and sidecar/remote CRDT state design |
-| Main risk | Coupling local state design to Git history and complexity of Drive bridge | Reinventing substantial version/merge machinery | Mismatch with plain Markdown and external Drive edits |
-
-### Option A — Git as internal local engine
-
-Use private Git objects/trees/commits to represent local document snapshots. A request may produce one commit or another carefully specified grouping. The remote Git adapter can use native Git where possible; Google Drive requires conversion from the Git state to Drive file operations and a persisted sync mapping.
-
-**Advantages:** mature version history, content addressing, merge implementations, native Git remote connectivity.
-
-**Costs/risks:** Git commits do not record failed requests; commit author metadata is not an authenticated actor; import of direct edits from Drive requires synthetic commits/mapping; many small operations may produce many Git commits; branch/ref semantics, garbage collection, audit completeness and hidden working-tree exposure need careful design. No public working tree is required in principle.
-
-### Option B — Managed snapshots and an operation journal
-
-Store durable document snapshots or version deltas, a journal/outbox of attempted and applied operations, and remote synchronization state. An embedded storage mechanism (potentially a small database, filesystem objects or an append-only store) is an implementation candidate, **not** a decision to adopt an RDBMS or require ACID transactions.
-
-**Advantages:** aligns persistence with awl's request/operation model and per-operation audit; the same document-level model can be projected to Git or Google Drive; composite partial outcomes are natural.
-
-**Costs/risks:** version retention, snapshot reconstruction, integrity, compaction and diff/merge must be designed or delegated. Git remote handling would require a Git adapter creating/reading commits, not merely uploading Markdown blobs. A bespoke implementation must be bounded to avoid recreating a VCS.
-
-### Option C — CRDT-backed local engine
-
-Use a CRDT state model as canonical local representation and export Markdown to remote backends.
-
-**Advantages:** offline edits and convergence among participating CRDT replicas.
-
-**Costs/risks:** Git and Google Drive remotes store ordinary Markdown; a Markdown-only copy does not retain all CRDT causal history. External edits and round-tripping of YAML/Markdown introduce semantic challenges, and not every converged text is meaningful. This is **deferred**, not rejected on general grounds.
-
-### Preliminary assessment
-
-**Shortlist A and B for an evaluation spike; defer C.** There is insufficient evidence to choose Git as the local engine solely because Git is also a remote backend. B may make audit/composite semantics more direct; A may avoid building history and merge systems. Both still need a Drive synchronization implementation.
-
-## 4. Sync adapter implications
-
-| Concern | Git backend candidate | Google Drive backend candidate |
+| Concern | Revised direction | Still open |
 | --- | --- | --- |
-| Remote identifier | Repository URL/ref/object ID | Drive folder/file IDs |
-| Change discovery | Fetch/remote refs/commit ancestry | Incremental changes feed and provider inventory |
-| Document retrieval | Git tree/blob | Drive file download |
-| Publishing | Commit/ref/push semantics | File upload/create/update/move semantics |
-| Remote history | Native commit graph | Provider revisions; may have retention/access limitations |
-| Local-to-remote projection | Native if Git-backed locally; otherwise synthetic commits | Project-relative document paths/files |
-| Audit sharing | Git commits alone are incomplete application audit | Needs independent application-defined representation/policy |
-| Constraints | Refs, non-fast-forward, branch/permission rules | File IDs vs duplicate names, folder scope, API rate limits/permissions |
+| Project identity | Slug addresses an awl project | Slug grammar, namespaces, project-to-repository mapping |
+| Local persistence | Git-backed local state | Library, repository layout, commit policy, operation journal |
+| Shared version history | One authoritative Git remote per project | Hosting, branch/ref, permissions, update rules |
+| Google Drive | Optional satellite integration from Git hub | Export-only versus bidirectional; scope and mapping |
+| Future providers | New hub-connected integrations | Which providers, plugin mechanism, scheduling |
+| Audit | awl request/operation audit + Git history | Shared audit location, retention, actor authentication, tamper resistance |
+| Conflicts | Visible and never silently overwritten | Algorithms and handling of external edits |
+| Offline | Local commits continue without a network | Initial checkout, partial/offline availability, recovery |
+| Composite | Grouped requests with per-operation outcomes | Failure policy and Git commit grouping |
+| Markdown | Plain .md + generic YAML frontmatter | Detailed preservation/compatibility semantics |
 
-The provider can supply state signals, but its guarantees cannot be copied verbatim into a provider-independent promise. In particular, Drive change tokens aid incremental discovery, not arbitrary, durable two-way commits.
+### Consistency boundaries
 
-The first implementation slice must not conceal unsupported safety guarantees. How conflicts are reconciled, and the exact handling of remote writes by other applications, remain open pending a concrete use-case study.
+There are now **three potentially different progress positions**:
 
-## 5. Editing, composites, and audit
+1. **Locally applied:** an operation is recorded in local Git and audit state.
+2. **Git published:** the relevant commit is accepted by the authoritative Git remote.
+3. **Satellite projected:** a given integration has reflected the corresponding Git state, if configured.
 
-Proposed conceptual request shape (not a fixed CLI command schema):
+Consequently, "synchronized" must be qualified; a user may be current with the Git hub while Google Drive is behind. Satellites must not report success before the provider confirms the corresponding operation.
+
+### Why Git at the center?
+
+Using a central Git remote avoids a network of arbitrary pairwise synchronizers and gives clients a shared change history independent of external provider revision models.
+
+The tradeoff is that every non-Git provider now needs an adapter connecting it to the Git hub; an external provider is not a drop-in alternative source of truth. Google Drive can contain ordinary Markdown files, but cannot natively consume Git commits, references or operation audit logs.
+
+## 4. Alternative history and rejected-for-now simplifications
+
+### Previous Option B: Generic local snapshots/journal
+
+Originally considered as an alternative local engine, with both Git and Drive treated as peer remote backends. This is **not the owner's currently preferred topology** because it would duplicate version-history functionality while a Git hub is already central. An operation journal may still supplement Git for application audit; selecting its storage is open.
+
+### Previous Option C: CRDT / Automerge
+
+CRDTs were considered for offline convergence. They are not currently necessary to describe the selected Git hub topology, and non-CRDT Markdown integrations lose causal CRDT information unless additional state is maintained. Deferred, not ruled out by evidence.
+
+### Alternative: Direct filesystem editing
+
+Previously discussed, but rejected as the supported agent write path because uncontrolled mutations bypass awl operation audit and safe multi-edit processing. Managed on-disk Git files may still exist internally.
+
+### Alternative: Full ACID transaction manager
+
+Not required. The system should preserve each accepted document result durably and clearly describe partial composite outcomes. Global cross-document rollback or distributed transactions are not product requirements.
+
+## 5. Operational model (illustrative, not finalized CLI syntax)
 
 ~~~yaml
 project: muse
 request_id: example-123
 operations:
-  - id: status
+  - id: update-status
     op: metadata.set
     path: Activities/example.md
     key: workflow-status
     value: completed
-  - id: outcome
+  - id: update-outcome
     op: document.edit
     path: Activities/example.md
     edits:
@@ -146,58 +145,47 @@ operations:
         new_string: Implementation completed.
 ~~~
 
-- A content edit may use exact text replacement; contextual patches and revision-aware merge remain candidate strategies.
-- For every operation, awl must report applied, failed or not executed as appropriate. Composite-level status may be partial.
-- Individual document updates should not leave truncated or inconsistent bytes; this need not imply global cross-document transactions or distributed rollback.
-- Audit should distinguish request intent from final document diff, local application from remote synchronization, and asserted actor identity from authenticated identity.
-- An implementation may group several modifications of one document before committing its new local version; the policy is not settled.
-- Local revision and remote provider revision should not be conflated.
-- When a client sees a locally committed revision, awl must not silently lose it on restart or during failed sync.
+An accepted local change may become one or more Git commits. Its status can subsequently progress through central Git publication and optional independent satellite export. Audit should connect these stages by stable correlation IDs; exact storage and synchronization representation remain open.
 
-## 6. Open questions (intentionally not resolved here)
+## 6. Open questions — defer detailed edge cases
 
-1. **Local engine:** A or B, persistence libraries, snapshot representation, revision retention and garbage collection.
-2. **Sync contract:** Shared primitives versus backend-specific sync strategies, order of pull/push, and remote state baselines.
-3. **Sync scheduling:** Explicit command, opportunistic sync during operations, or optional daemon; no daemon requirement currently.
-4. **Conflicts:** Stale patches, out-of-band provider edits, simultaneous changes, interrupted transfers, conflict exposure and merge policy. Detailed edge cases deferred per user direction.
-5. **Audit:** Which events are persisted locally, shared via remote backend, protected from rewrite, and correlated across collaborators?
-6. **Provider scope:** Git branch/ref choice and Drive folder/root and file mapping. Git/GDrive are candidates, not shipped features.
-7. **Local access boundary:** Threat model, credentials, and whether reading through awl is mandated for all clients.
-8. **Composite semantics:** Stop-on-error or continue-on-error, dependencies, partial status, document-level grouping.
-9. **Formatting:** YAML comment/order preservation, frontmatter parse failure, Markdown encoding and line endings.
-10. **Compatibility:** Future OKF conformance verification, legacy convention migration, and links.
-11. **Operations interface:** CLI arguments, request serialization, streaming outputs, agent tool interoperability, future MCP.
-12. **Licensing/dependencies:** Choose only after technical spikes and license review; the awl repository currently uses AGPLv3.
+1. **Satellites:** Is Google Drive a one-way export/projection or does it also ingest Drive-originated edits? If bidirectional, who resolves the new Git commits and their provenance?
+2. **Integration execution:** Where do satellite sync workers run (client, hosted job, webhook-triggered process, etc.)? GitHub/GitLab hosting alone does not automatically run a Drive connector.
+3. **Git repository topology:** One repository per project versus per-project scope within a repository; main branch, operational refs, policies and protected updates.
+4. **Audit:** Is locally stored audit sufficient or must attempted/failed operations be shared and authenticated? How does audit survive synchronizing across different clients?
+5. **Git persistence:** API or CLI invocation; storage isolation, commit frequency, idempotency/recovery, and history management.
+6. **Editing:** Exact text edit, context patch, line/hash anchors and optional merge techniques remain candidates, not chosen algorithms.
+7. **Conflicts:** Divergent Git history, external Drive edits, in-flight publishes, simultaneous creation and ambiguous results. Detailed scenarios postponed at user request.
+8. **Satellite scope:** Whole project export versus selected documents; filenames, YAML preservation, and provider limitations.
+9. **Security:** Authoritative access controls, actor identity, credentials, secrets, failure isolation, optional encryption.
+10. **Operational behavior:** Sync timing, background process need, backpressure, API quotas, onboarding and migration.
+11. **Metadata compatibility:** OKF v0.2 target, old worklog status and wikilinks remain user-owned until separately migrated.
 
-## 7. Suggested small evaluation, not yet approved implementation
+## 7. Next evaluation increment (proposal only)
 
-Conduct a short, controlled evaluation of A and B with equivalent scenarios:
+A focused implementation-independent assessment should investigate:
 
-- Bootstrap a project with several Markdown files containing unknown frontmatter and standard Markdown links.
-- Read, apply several edits in one document request, and run a composite with one deliberate failure.
-- Commit locally offline, restart, and inspect pending operations and audit history.
-- Export changes to a Git repository and to a Google Drive folder in test environments.
-- Pull an externally modified remote Markdown document; explicitly report when reconciliation is unsafe.
-- Compare complexity, code size, dependency and license implications, correct audit semantics, behavior on restart, and number of network interactions.
+- How to represent a project and a composite operation in managed Git without a user-writable working tree.
+- How to correlate Git commits with application-level audit and partial operation results.
+- How a satellite exporter derives Drive file changes from a moving Git reference and checkpoints completed work.
+- Which architectural parts remain operationally necessary when no satellite backend is configured.
+- Whether publishing Git commits and projecting to Drive can be cleanly decoupled with visible per-destination status.
 
-The experiment **must not** be represented as successfully implemented, run or verified merely because it is proposed here.
+**Do not** implement a Git/Drive bridge or choose a specific CI/daemon architecture solely on the basis of this document.
 
-## 8. Decision gates
+## 8. Decision boundary and documentation status
 
-1. Review this architectural decomposition and whether A/B are sufficient candidate local persistence models.
-2. Confirm how strongly the product needs **shared** audit versus local audit.
-3. Clarify minimal provider capabilities and synchronization outcomes when evaluation begins.
-4. Select technology only after evidence from a small proof of concept.
-5. Record any accepted significant decision as a repository ADR; this exploratory document is not an ADR.
+- **Owner-selected architectural direction:** Git local + authoritative Git remote + satellite integrations in a hub-and-spoke topology.
+- **Not yet approved:** concrete Git layout, sync mechanisms, operational deployment, libraries, trust model and conflict semantics.
+- **Repository status:** this document is in an unmerged draft PR. It is not an implementation record or ADR.
 
 ## References
 
-- [Proposed core requirements](../requirements/core-requirements.md).
-- [AgentWorklog CLI](https://github.com/giacomobartoloni/awl).
-- [OKF v0.2 specification](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md).
-- [Google Drive: retrieve changes](https://developers.google.com/workspace/drive/api/guides/manage-changes): API supports incremental change discovery.
-- [Google Drive: manage file revisions](https://developers.google.com/workspace/drive/api/guides/manage-revisions): revision availability/access are provider-specific.
-- [Git: update-ref](https://www.kernel.org/pub/software/scm/git/docs/git-update-ref.html): conditional ref updates.
-- [Git: worktrees](https://git-scm.com/docs/git-worktree.html): distinguishes repositories and working trees.
+- [Proposed Core Requirements](../requirements/core-requirements.md)
+- [AgentWorklog CLI repository](https://github.com/giacomobartoloni/awl)
+- [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
+- [Git reference updates](https://git-scm.com/docs/git-update-ref)
+- [Google Drive changes](https://developers.google.com/workspace/drive/api/guides/manage-changes)
+- [Google Drive revisions](https://developers.google.com/workspace/drive/api/guides/manage-revisions)
 
-**Repository status at evaluation:** default branch held LICENSE only on 2026-10-23. These files are proposed in an unmerged branch; no code, integration tests, or synchronization experiments were performed.
+This file supersedes the earlier draft architecture comparison from the same PR branch while preserving its alternatives and reasons for reconsideration. No experiments, tests, provider integrations or implementation have been performed.
