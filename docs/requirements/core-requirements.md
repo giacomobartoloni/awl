@@ -81,6 +81,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
 | FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
 | FR-27 | Core | Document creation/editing, generic YAML metadata mutations, and composite request members must not require or accept caller-supplied file revision references, commit SHA, `base_revision` or `expected_revision`. awl resolves Git revisions, validates content intent, and handles safe internal concurrency retries; unsafe semantic conflicts remain explicit. |
+| FR-28 | Core | Deliver awl first as an independent shell-invocable CLI usable by humans and coding agents across different harnesses. Support non-interactive execution, predictable human and machine-readable outcomes, actionable domain errors and reliable process exit statuses without requiring a daemon, MCP server, SDK, harness-specific tool wrapper, or direct Git commands from the caller. Concrete command names, flags, request serialization and exit-code numbers remain unapproved. |
 
 ## 5. Non-functional requirements
 
@@ -93,7 +94,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | NFR-05 — Extensibility | Document metadata operations are independent of storage. The authoritative Git transport and optional satellite connector capabilities are separated and never advertised as interchangeable. |
 | NFR-06 — Security | Treat paths, document content, config, and provider input as untrusted; avoid path escapes, credential exposure and unauthorized operations. |
 | NFR-07 — Testability | Verify operations, offline recovery, audit and synchronization against representative Markdown samples and backend capabilities. |
-| NFR-08 — Usability | CLI outputs should be predictable for humans and agents; composite responses should be machine-readable. |
+| NFR-08 — Usability | CLI-first and harness-agnostic: commands can run non-interactively through ordinary shell tools; humans see concise output, automation can request stable machine-readable outcomes, and stdout/stderr plus exit codes distinguish full success, partial success and failure without exposing internal Git mechanics. |
 | NFR-09 — Performance | Avoid redundant downloads and unnecessary content transfer; set quantitative targets after a representative prototype. |
 | NFR-10 — Search safety | Indexes are disposable derived data; indexing and querying must not rewrite Markdown or leak files outside authorized project scope. |
 | NFR-11 — Search resilience | Offline lexical retrieval must be possible on initialized local state; semantic/hybrid model setup, offline behavior, degradation and resource budgets need explicit contracts and measurement. |
@@ -137,6 +138,9 @@ Configuration acceptance candidates (2026-11-04; **not implemented or tested in 
 | AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
 | AC-25 | A client edits a document or YAML metadata without reading it first and without providing a file revision. | awl obtains the current revision internally, validates explicit operation intent and either applies safely or reports a content-level error; no revision-token prompt. |
 | AC-26 | Two agents concurrently edit disjoint documents without revision references. | awl handles recoverable local revision races transparently through safe revalidation and bounded internal attempts, without surfacing Git CAS details. |
+| AC-27 | A coding agent invokes awl through an authorized shell from a source worktree, without an MCP server or custom integration. | awl resolves the intended source/project context and returns a deterministic CLI result without interactive prompts or manual Git coordination. |
+| AC-28 | A coding agent submits a multi-line or composite document change non-interactively. | The CLI has a safe machine-oriented input mechanism and produces ordered, machine-readable member results, with no mandatory file revision arguments. Exact input transport and flag spelling remain proposals. |
+| AC-29 | A CLI operation fails or partially succeeds. | An agent can distinguish the outcome using documented process exit status and structured diagnostics, without scraping Git stderr; local persistence and remote publication are reported independently. |
 
 ## 7. Architectural evaluation and open requirements
 
