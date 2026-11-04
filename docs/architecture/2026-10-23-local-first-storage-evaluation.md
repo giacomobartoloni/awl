@@ -49,6 +49,7 @@ The diagram describes logical responsibilities; a central awl service, custom Gi
 
 - Resolve project slug and authorization context.
 - Read project-relative Markdown, manage arbitrary YAML-frontmatter metadata, and support editing operations inspired by LLM-agent edit/patch tools.
+- Index and search project-scoped Markdown through lexical/full-text, semantic, and hybrid retrieval as a **core** document capability. The index is disposable derived state and does not govern writes or Git authority. Structured metadata query/filtering is deferred.
 - Accept multiple ordered operations in a composite; report individual success, failure and nonexecution without promising global transactions.
 - Record operation intent, actor information actually known, resulting Git revisions and local/sync outcomes. Git commits alone do not capture failed requests, verified identities or all partial composite results.
 - Persist managed Git state privately where possible, without allowing direct filesystem edits as part of the supported API. OS-level tamper resistance is **not** established merely by hiding files.
@@ -91,6 +92,7 @@ The diagram describes logical responsibilities; a central awl service, custom Gi
 | Offline | Local commits continue without a network | Initial checkout, partial/offline availability, recovery |
 | Composite | Grouped requests with per-operation outcomes | Failure policy and Git commit grouping |
 | Markdown | Plain .md + generic YAML frontmatter | Detailed preservation/compatibility semantics |
+| Core search/indexing | Derived document index with lexical, semantic and hybrid retrieval | Engine choice, source text scope, model provisioning, ranking, index freshness and repair; no structured metadata filters initially |
 
 ### Consistency boundaries
 
@@ -101,6 +103,8 @@ There are now **three potentially different progress positions**:
 3. **Satellite projected:** a given integration has reflected the corresponding Git state, if configured.
 
 Consequently, "synchronized" must be qualified; a user may be current with the Git hub while Google Drive is behind. Satellites must not report success before the provider confirms the corresponding operation.
+
+**Search consistency is a separate derived-state concern:** the index may lag the managed local Git revision even when Git publication/satellite projection has a different status. Search must disclose freshness/availability; index rebuild does not create or publish document commits. Search engine selection and refresh mechanics are open.
 
 ### Why Git at the center?
 
@@ -160,6 +164,7 @@ An accepted local change may become one or more Git commits. Its status can subs
 9. **Security:** Authoritative access controls, actor identity, credentials, secrets, failure isolation, optional encryption.
 10. **Operational behavior:** Sync timing, background process need, backpressure, API quotas, onboarding and migration.
 11. **Metadata compatibility:** OKF v0.2 target, old worklog status and wikilinks remain user-owned until separately migrated.
+12. **Search/indexing:** lexical, semantic and hybrid retrieval are in core scope; compare QMD against document identity, freshness, safe source reads, resource use, and offline availability. Whether Markdown frontmatter is indexed as plain text is open. Structured frontmatter metadata filters remain deferred.
 
 ## 7. Next evaluation increment (proposal only)
 
@@ -170,18 +175,21 @@ A focused implementation-independent assessment should investigate:
 - How a satellite exporter derives Drive file changes from a moving Git reference and checkpoints completed work.
 - Which architectural parts remain operationally necessary when no satellite backend is configured.
 - Whether publishing Git commits and projecting to Drive can be cleanly decoupled with visible per-destination status.
+- Whether a pinned QMD release can satisfy core indexing/search requirements without rewriting source Markdown, requiring metadata filters, or coupling document operations to a particular search runtime; see the [assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md).
 
 **Do not** implement a Git/Drive bridge or choose a specific CI/daemon architecture solely on the basis of this document.
 
 ## 8. Decision boundary and documentation status
 
 - **Owner-selected architectural direction:** Git local + authoritative Git remote + satellite integrations in a hub-and-spoke topology.
-- **Not yet approved:** concrete Git layout, sync mechanisms, operational deployment, libraries, trust model and conflict semantics.
+- **Owner-confirmed search scope (2026-11-04):** indexing plus lexical/full-text, semantic and hybrid retrieval are core; structured metadata search/filtering is deferred. QMD is a candidate, not a selected engine.
+- **Not yet approved:** concrete Git layout, sync mechanisms, operational deployment, libraries, trust model and conflict semantics; search engine, index format, model runtime, query schema and refresh policy.
 - **Repository status:** this document is in an unmerged draft PR. It is not an implementation record or ADR.
 
 ## References
 
 - [Proposed Core Requirements](../requirements/core-requirements.md)
+- [QMD Search and Indexing Assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md)
 - [AgentWorklog CLI repository](https://github.com/giacomobartoloni/awl)
 - [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 - [Git reference updates](https://git-scm.com/docs/git-update-ref)
