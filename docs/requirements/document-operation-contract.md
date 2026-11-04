@@ -37,7 +37,7 @@ CLI syntax, Git object/branch layout, service/MCP interfaces, Git libraries, aut
 | Content | Full raw Markdown, potentially including YAML frontmatter | Read results should not silently normalize bytes |
 | Body | Markdown content outside YAML frontmatter, when it can be recognized | Text editing versus raw-document editing scope remains open |
 | Metadata | YAML values in frontmatter | Arbitrary keys/types; no domain-specific interpretation |
-| Document revision | Opaque local state identifier returned with a read | May be used to detect or recover from stale edits; concrete Git mapping TBD |
+| Document revision | Opaque local state identifier returned with a read | Useful for history, diagnostics and optionally pinned reads; awl resolves write revisions internally and does not accept caller-supplied file revisions in mutations |
 | Request ID | Correlation identifier for one submitted operation or composite | Identity source/generation and retry semantics TBD |
 | Operation ID | Identifier for one member of a composite | Enables ordered, per-operation reporting |
 | Local commit | State accepted and retained by managed local Git | Not necessarily published to the remote Git hub |
@@ -56,7 +56,7 @@ This table describes **behavioral operations**, not finalized public method name
 | `document.list` | Project slug, optional relative prefix | Document paths and optional revisions | Unknown project, invalid prefix |
 | `document.read` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
 | `document.create` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
-| `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe stale edit |
+| `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits; no caller-supplied file revision | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe edit |
 | `metadata.get` | Project slug, path, JSON Pointer | Typed frontmatter value + document revision | Missing target; malformed/ambiguous YAML |
 | `metadata.set` | Project slug, path, JSON Pointer and typed YAML value | Replace existing value, never implicit list insertion | Missing target, unsafe index, parsing failure |
 | `metadata.remove` | Project slug, path, JSON Pointer | Remove map entry or list element (shifts later indexes) | Unverifiable stale position, malformed YAML |
@@ -84,7 +84,6 @@ Candidate request envelope:
       "id": "edit-outcome",
       "op": "document.edit",
       "path": "Activities/example.md",
-      "base_revision": "rev-example-1",
       "edits": [
         {
           "old_string": "Pending verification.",
@@ -96,7 +95,7 @@ Candidate request envelope:
 }
 ~~~
 
-The same operation model can be submitted as a single action or within a composite. A one-operation wrapper is an illustrative transport choice, not a required JSON schema.
+The same operation model can be submitted as a single action or within a composite. A one-operation wrapper is an illustrative transport choice, not a required JSON schema. **No mutation request or composite member accepts a file revision parameter.** The `request_id` above identifies the request for correlation; it is not a file version.
 
 ### Common response information
 
@@ -131,13 +130,15 @@ Example successful local response (illustrative values and serialization):
 
 ### Revision visibility
 
-A read returns the local revision used to produce its content. Later writes may refer to that revision.
+A read returns the local revision used to produce its content. This revision can support history, diagnostics and revision-pinned **reads**, but it is **not a write input**.
 
-**Selected policy for body editing:** a stale `base_revision` does **not by itself** force failure or a reread. The exact target must be uniquely found in the **current Markdown body**, and awl must be able to establish that applying the requested replacement is safe. Otherwise return `TARGET_NOT_FOUND`, `AMBIGUOUS_MATCH` or `REVISION_CONFLICT`. No fuzzy matching or blind last-writer-wins fallback.
+**Owner-confirmed write contract (2026-11-04):** No awl mutation operation, including `document.edit`, `document.create`, `metadata.*`, or members of `composite.apply`, requires or accepts a caller-supplied file revision, SHA, `base_revision`, or `expected_revision`. Callers describe the intended document/metadata operation; awl reads the current managed state and owns revision checks and internal retry orchestration. An edit must not fail solely because the caller did not provide a revision.
 
-The exact safety condition for "still safely applicable" needs focused design and tests; simple string uniqueness does not prove semantic correctness. Strict revision preconditions could be an optional mode, while contextual patch/rebase/three-way merge remains deferred.
+**Selected body-edit behavior:** the exact target must be uniquely found in the **current Markdown body**, and awl must establish that replacement is safe. Otherwise return `TARGET_NOT_FOUND`, `AMBIGUOUS_MATCH`, or a document-level conflict. No fuzzy matching, blind last-writer-wins fallback, or silent semantic reinterpretation. Prior content observed by the caller may be stale, but no caller-provided revision is needed.
 
-This stale-body-edit policy must not be presumed safe for all metadata edits, particularly numeric indexes into changed YAML sequences.
+The exact safety condition for "still safely applicable" needs focused design and tests; simple string uniqueness does not prove semantic correctness. Context/anchors as part of the **edit intent** may be considered later, but no file revision precondition may be added to the mutation interface.
+
+This safe exact-body-edit policy does not automatically apply to numeric indexes into changed YAML sequences. Positional metadata mutations may need an explicit *content- or element-based* condition that identifies the intended target/position, **never** a file revision token. If intent cannot be verified, fail safely; do not silently move or overwrite elements.
 
 ## 5. Reading documents
 
@@ -187,7 +188,6 @@ Example (illustrative):
 id: finish-outcome
 op: document.edit
 path: Activities/example.md
-base_revision: rev-example-1
 edits:
   - old_string: "Pending verification."
     new_string: "Implementation completed."
@@ -195,9 +195,9 @@ edits:
     new_string: "## Follow-up\nNo further action required."
 ~~~
 
-The old revision can be stale, but the current body target must still be safely and uniquely applicable. An edit matching text **only inside frontmatter** is reported as missing; it must never edit YAML by accident.
+The caller's previously observed content may be stale, but the current body target must still be safely and uniquely applicable. No revision reference is passed to the edit. A target matching text **only inside frontmatter** is reported as missing; it must never edit YAML by accident.
 
-**Deferred:** context-aware unified diffs, line/hash anchors, three-way merge, strict-conditional mode syntax and permitted automatic retries. Body/frontmatter boundary detection for malformed documents still requires a documented policy.
+**Deferred:** context-aware unified diffs, line/hash anchors, and three-way merge. Automatic retry policy is evaluated in the [configuration/worktree design](../design/2026-11-04-project-config-and-worktree-resolution.md); safe guarded internal retry is preferred, but no caller-supplied revision precondition is permitted. Body/frontmatter boundary detection for malformed documents still requires a documented policy.
 
 ## 7. Generic frontmatter metadata
 
@@ -257,7 +257,7 @@ index: 1
 value: {name: Charlie, roles: [reviewer]}
 ~~~
 
-**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. For stale positional writes, require a verifiable revision or a sufficiently strong explicit precondition that identifies the intended element/position; otherwise return `REVISION_CONFLICT`. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. The relaxed stale exact-target behavior of body edits does not extend automatically to indexed metadata writes.
+**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. The caller never supplies a file revision. For a positional mutation whose intended element or position cannot be verified from the operation's explicit content/element conditions against the current state, return an actionable conflict rather than guessing. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. Internal Git revision comparisons protect concurrent commit publication but do not replace semantic safety checks on list positions.
 
 **Open details:** exact public syntax, absent map-leaf behavior, expected/precondition representation, root replacement, missing-key removal, YAML tags/aliases/anchors/non-string keys and formatting-preserving serialization. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md). This selects a path standard and safety principle, **not** an implementation library or full JSON Patch semantics.
 
@@ -386,6 +386,15 @@ Audit representation, retention, where failed requests are recorded, and whether
 | OP-AC-32 | An existing empty document is read | Valid empty read, not DOCUMENT_NOT_FOUND | FR-04 |
 | OP-AC-33 | An excerpt includes frontmatter lines followed by a body edit | document.edit remains body-only | FR-05, FR-06 |
 
+Additional owner-confirmed revision-free-write acceptance cases (2026-11-04; not implemented):
+
+| ID | Scenario | Expected outcome | Source |
+| --- | --- | --- | --- |
+| OP-AC-34 | Call `document.edit` without first reading or passing any file revision | awl resolves the current local state and either applies the uniquely safe edit or returns a target/content-level error | Owner-confirmed write-interface boundary |
+| OP-AC-35 | Call `metadata.set`, `metadata.insert`, or `metadata.remove` without any file revision | awl validates operation intent against current YAML; unsafe ambiguous list positions fail without a revision-token workaround | Owner-confirmed write-interface boundary |
+| OP-AC-36 | Two agents modify different documents without revision parameters | Internal CAS/revalidation can complete both safely; no raw Git error or caller-managed retry | Transparent Git orchestration requirement |
+| OP-AC-37 | Read with an optional pinned revision, then modify without passing that revision | Read continuation retains its pin, while the mutation independently resolves current state and applies safe operation rules | Read versus write separation |
+
 These are **specification-level acceptance scenarios**, not implemented test results.
 
 ## 12. Open design questions and review gates
@@ -393,7 +402,7 @@ These are **specification-level acceptance scenarios**, not implemented test res
 ### Decisions recorded from the project owner
 
 1. `document.edit` changes the Markdown **body only**.
-2. An obsolete read revision may still yield a safe exact-target body edit without forcing a new read.
+2. **2026-11-04:** callers never pass a file revision when modifying documents or metadata. awl manages revisions and safe retries internally; prior reads may be stale without requiring a caller-managed version token.
 3. Composite execution **continues** after member errors, reporting each outcome.
 4. One Git **content commit per request** records all successful changes.
 5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
@@ -404,7 +413,7 @@ These are **specification-level acceptance scenarios**, not implemented test res
 
 1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
 2. **Partial reads:** the owner accepted the **1-based absolute-file coordinate system (including frontmatter)**, optional revision-pinned continuation and explicit truncation/continuation semantics. [Comparative research](../research/2026-10-23-partial-read-agent-conventions.md). Numerical limits, public command/wire syntax and long-line fallback remain open.
-3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
+3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, without caller-supplied file revision tokens. Define content/element-based conditions for positional YAML mutations.
 4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
 5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
 6. **Search/indexing:** define result identity and ranking, query modes, indexing/refresh lifecycle, revision freshness and offline-model failure behavior. Decide whether frontmatter is indexed as ordinary text or excluded, and evaluate [QMD](../research/2026-11-04-qmd-search-and-indexing-assessment.md) without assuming metadata filters or a specific runtime.
