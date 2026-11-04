@@ -23,6 +23,19 @@ Provide a project-oriented, offline-first interface for reading, editing, indexi
 - Every applied change is associated with an auditable request/operation identity. Git commits may provide version history but do not by themselves capture attempted/failed operations or prove caller identity. Shared or tamper-resistant audit remains open.
 - Project-scoped document indexing and lexical/full-text, semantic, and hybrid retrieval are **core capabilities**. Structured YAML metadata indexing/query/filtering, shared _research/_guides handling, a mandatory server, and a required synchronization daemon are not in the initial scope. No search engine or dependency has been selected.
 
+### Source repository and awl configuration (owner-confirmed 2026-11-04)
+
+- A source-code repository is an optional context for an awl project; the source repository and awl's managed worklog Git repository are distinct. Nothing here requires all awl projects to be Git source repositories.
+- When a source repository is used, `.awl/project.yaml` is its shared, version-controllable awl project configuration; `.awl/local.yaml` is its personal, Git-ignored configuration entry point.
+- All linked Git worktrees of the same source repository must resolve one shared effective **local awl configuration** and one managed local awl Git repository on the same machine. No per-worktree awl repository or file-replication service is required.
+- The authoritative personal configuration is stored once under the **source Git common directory**. `.awl/local.yaml` may expose that single file through an optional symlink; awl must work without the symlink. A separate ordinary local.yaml in a worktree must not silently override the common file.
+- Managed local worklog Git repositories live by default under the user's application-data directory, with an explicit personal storage-path override. A project slug alone must not silently conflate distinct project histories.
+- Git's effective user identity is the default when operating in a source repository; awl may explicitly override it in local configuration. awl must not modify Git user configuration. Git commit attribution, identity provenance, and the effect of worktree-specific Git identity settings still need a precise contract.
+- The `.awl/local.yaml` convention must be excluded from source Git tracking. Project configuration must not carry machine-specific paths, personal identities, or secrets by default. No background configuration synchronization, watcher, account system, or extra registry is required by this decision.
+- Differences between branch-specific `.awl/project.yaml` versions must not silently redirect an operation to an incompatible awl project or managed repository.
+
+These are owner-confirmed product/configuration boundaries, not claims of implemented behavior. Exact YAML schema, config CLI, platform paths, initialization, link handling, and conflict/error representations remain design work.
+
 ## 3. Terminology
 
 - **Project:** Slug-addressed context with a private local Git replica, one authoritative remote Git repository and optional satellite integrations.
@@ -64,6 +77,10 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-21 | Core | Expose project-scoped **lexical/full-text, semantic, and hybrid document retrieval** with grounded document identities and useful excerpts. Mode-specific model provisioning, ranking, limits and public syntax require design and validation. |
 | FR-22 | Core | Make index availability and freshness relative to managed local document revisions observable, including pending, stale, failed, or rebuild-required states; never misrepresent old index hits as current Git content. |
 | FR-23 | Later | Structured frontmatter metadata indexing, filtering, discovery, and queries; optional OKF/project validation and structural Markdown editing. Generic YAML metadata **document operations** remain in scope via FR-05. |
+
+| FR-24 | Core | In a source Git repository, support version-controllable `.awl/project.yaml` and a Git-ignored `.awl/local.yaml` entry point, resolving one authoritative personal configuration via the source repository's Git common directory for all linked worktrees. No replication or mandatory symlink. |
+| FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
+| FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
 
 ## 5. Non-functional requirements
 
@@ -108,6 +125,16 @@ New search acceptance candidates (2026-11-04; **not executed**):
 | AC-17 | Search offline after initial local index/model setup. | Supported modes work without unannounced remote access; unavailable semantic models are reported explicitly. |
 | AC-18 | Attempt a query that filters by arbitrary YAML-frontmatter fields. | Structured metadata filtering is clearly unsupported in the initial search contract, never silently ignored. |
 | AC-19 | Index legacy Markdown with YAML frontmatter and existing Obsidian links. | Source documents are not rewritten, normalized, or migrated by indexing. |
+
+Configuration acceptance candidates (2026-11-04; **not implemented or tested in awl**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-20 | Invoke awl from a main worktree and a linked worktree of one source repository. | Both resolve the same authoritative personal awl config and managed local worklog Git repository, independently of their working-tree paths. |
+| AC-21 | Use `.awl/local.yaml` with a symlink in one worktree and without a symlink in another. | Both use the common-directory configuration; no copy or background synchronization is required. |
+| AC-22 | Git provides a user name/email, then awl-local identity overrides them. | Git identity is used by default; configured overrides take precedence without changing Git config; missing identity is reported when required for a commit. |
+| AC-23 | A branch's `.awl/project.yaml` changes the awl project identity or repository target incompatibly. | awl signals the mismatch before writing; it does not silently redirect or merge unrelated histories. |
+| AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
 
 ## 7. Architectural evaluation and open requirements
 
