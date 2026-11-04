@@ -329,3 +329,38 @@ These are **illustrative messages**, not CLI output already approved. The public
 A minimal vertical slice should demonstrate concurrent disjoint edits, genuine content conflict, composite tentative-vs-committed result correctness, an offline local success, and crash/indeterminate state detection before promising transparency at scale.
 
 Reference: [Git update-ref expected-old-value semantics](https://git-scm.com/docs/git-update-ref) · [Git commit-tree](https://git-scm.com/docs/git-commit-tree) · [Git push status](https://git-scm.com/docs/git-push).
+
+## 11. Revision-free mutation interface — owner-confirmed (2026-11-04)
+
+**Owner decision:** awl users and calling agents must **never pass file revision references** to modify Markdown or YAML. Neither an edit, a metadata mutation, nor a member of a composite accepts `base_revision`, `expected_revision`, Git commit SHA, or another file-version token as a mutation argument. This supersedes the older illustrative `base_revision` request examples in the merged operation contract; the contract is amended in this PR. **Read-only** revision identifiers may still be returned for history, diagnostics and optional snapshot-pinned pagination; they are not write preconditions.
+
+### Interface principle
+
+A caller describes **what to change**, not which underlying Git revision to use:
+
+```yaml
+op: document.edit
+path: Activities/example.md
+edits:
+  - old_string: "Pending verification."
+    new_string: "Implementation completed."
+```
+
+At execution time, awl obtains the current managed revision itself, applies operation-specific safety checks and prepares an isolated candidate. Git ref CAS, guarded internal retry and audit correlation are **not caller responsibilities**. A local race may trigger an automatic re-evaluation against the latest revision; if it can preserve the request's meaning, awl returns the final applied result without showing Git details.
+
+**Conflict boundary:** Removing file revision parameters does **not** mean blind replacement. Markdown `old_string` must still identify a uniquely safe body target. For generic YAML fields, a JSON Pointer resolves the current field. For positional list edits, an explicit content/element condition may be necessary to identify the intended item/position: such a condition is *not a file revision* and should be required only when semantic safety cannot otherwise be established. A caller with insufficient information receives a human- and agent-actionable content conflict rather than a request to find a Git SHA. Avoid silent last-writer-wins or best-effort list repositioning.
+
+### Minimal validation scenarios
+
+| Case | Expected application behavior |
+| --- | --- |
+| A direct edit with no preceding read and no revision argument | awl reads current state and applies an unambiguous safe target, or returns a domain error |
+| A user edits based on a stale earlier read without supplying its revision | awl tests the requested target against current content, with safe application or explicit conflict |
+| Two agents edit separate documents concurrently without version inputs | awl revalidates/retries a losing internal CAS where safe; returns applied local state, not raw Git failure |
+| Same text appears several times in a Markdown body | awl reports ambiguous target; it does not guess based on a hidden Git revision |
+| A JSON Pointer refers to an uncertain YAML sequence position | awl requires sufficient element/content identity or rejects safely; never asks for a file-version token |
+| A long paged read uses an optional pinned revision and is followed by an edit | The read can remain snapshot-pinned, while the edit independently resolves the latest writable state |
+
+### Design scope
+
+This requirement changes the **mutation request contract**, not the owner-approved revision-pinned read contract, Git's internal optimistic concurrency, per-request content commits, the visibility of local/remote publication states, or the separate application audit. No new command syntax, automatic semantic merger, lock manager, or implementation dependency is selected.
