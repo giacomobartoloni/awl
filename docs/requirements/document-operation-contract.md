@@ -430,3 +430,68 @@ These are **specification-level acceptance scenarios**, not implemented test res
 This document is a proposal added to an **unmerged GitHub draft PR**, not an approved operation specification. It narrows the interface discussion without locking implementation choices.
 
 **Suggested next task:** Review the search/indexing interface requirements and run a bounded QMD feasibility evaluation on representative local Markdown, while keeping existing nested-YAML and partial-read safety questions open. No code or tests are claimed by this document.
+
+
+## 14. CLI-first harness integration design (research proposal, 2026-11-04)
+
+**Owner direction:** optimize awl as a **CLI for coding agents and harnesses**, not as a specialized MCP service. These are candidate user-visible behaviors; no public command names or flag spellings are approved.
+
+### How coding-agent harnesses execute awl
+
+Codex, Claude Code and OpenCode can delegate shell commands to their runtimes when shell access is configured and permitted. The harness, not awl, handles tool selection, execution permissions, current directory, command timeout and returning process results to the model. A dedicated harness wrapper is optional; it should invoke the **same CLI behavior**, not implement a separate Git/document protocol.
+
+An agent in a source worktree should be able to call `awl` from that worktree without specifying source Git common directories, managed repository paths or file revisions. All managed Markdown mutations must pass through awl, not an agent's generic filesystem Edit/Write tool aimed at awl's private managed Git repository.
+
+### Candidate CLI surface
+
+```sh
+# Illustrative names/flags only, not an approved public syntax.
+awl read Activities/example.md --start-line 1 --max-lines 100 --format json
+awl edit Activities/example.md --old "Pending verification." --new "Completed." --format json
+awl search "git worktree config" --mode lexical --format json
+awl status --format json
+```
+
+For large or multiline bodies and composites, prefer **one structured stdin request** instead of generating two temporary files or forcing an LLM to escape nested shell strings:
+
+```sh
+awl apply --input - --format json <<'JSON'
+{
+  "operations": [
+    {
+      "id": "change-outcome",
+      "op": "document.edit",
+      "path": "Activities/example.md",
+      "edits": [{"old_string": "Pending verification.", "new_string": "Completed."}]
+    }
+  ]
+}
+JSON
+```
+
+These illustrative commands **do not** accept a file revision argument. Accepting stdin is a candidate to be validated against simple one-operation flags and file-backed payloads. JSON is recommended for composite/machine inputs; raw Markdown via stdin may eventually be useful for creates, but incompatible stdin modes must not be ambiguous.
+
+### Candidate process contract for reliable automation
+
+- **Non-interactive by default for commands used by agents:** do not launch an editor, pager, prompt, progress spinner or terminal UI when stdin/stdout is non-TTY. Missing required input produces a deterministic diagnostic and nonzero exit code. Human-focused interactive UX, if any, is separate and opt-in.
+- **Explicit output mode:** machine-readable structured JSON when requested, with a stable envelope for success, partial composite results, failure, local-durability state, and remote-publication state. Human default output should be concise. Do not mix Git logs, ANSI colors, warnings or streaming progress into JSON stdout.
+- **Stream boundaries:** stdout contains the documented command result; stderr contains actionable diagnostics. For JSON output, even failed commands should return a structured final result on stdout when possible; stderr must not be the only error source. Suppress secrets and avoid echoing whole user-owned documents in errors.
+- **Exit codes:** distinguish full success, partial composite completion, validation/semantic conflict, unavailable project/local storage, and infrastructure/remote failures at a stable **small category** level. Do not assign exact integer codes or promise all partial results are success. The output `error.code` contains the detailed cause.
+- **Input safety:** use unambiguous project-relative document paths; validate scope and symlinks; parse data as data (no shell evaluation, YAML executable tags, command substitution, or arbitrary hooks). Prefer structured stdin to huge CLI flags and sensitive values in process arguments.
+- **Predictability:** bounded stdout size and explicit truncation/continuation for document reads, stable ordering of composite member results, actionable content-level conflicts, no mandatory Git SHA or manual CAS retry, no hidden implicit remote push on local edit.
+- **Discovery:** accurate `--help` and usage examples matter more than a large agent-specific instruction framework. Optional short Agent Skills/AGENTS.md integration notes may aid discovery, but no harness-specific runtime dependency is part of core awl.
+
+### Harness evaluation cases (not run)
+
+| ID | Scenario | Proposed expected result |
+| --- | --- | --- |
+| CLI-AC-01 | Agent executes awl from a nested directory of one linked worktree | awl resolves current source context and canonical shared local state |
+| CLI-AC-02 | Agent edits a Markdown body without an explicit file revision | Safe targeted update or actionable domain conflict; no Git orchestration exposed |
+| CLI-AC-03 | Agent submits multiline/composite JSON through stdin with no TTY | Parsing is deterministic; one request with ordered member outcomes and one content commit for accepted changes |
+| CLI-AC-04 | Operation returns a content conflict or partial composite outcome | Distinguishable exit status plus valid structured diagnostic without ANSI/noise |
+| CLI-AC-05 | Local write succeeds when remote Git is unreachable | Report local persistence succeeded and remote publication is pending, not a false total failure |
+| CLI-AC-06 | An agent has only read permissions or shell permission is denied by its harness | awl does not bypass the harness or attempt an alternative unapproved mutation path |
+
+**Scope boundary:** MCP server, custom OpenCode/Claude/Codex wrappers, tool schemas, background sync and dedicated SDKs are potential follow-ons, not prerequisites. Validate the shell-only CLI experience with representative tool invocations before adding adapters.
+
+References: [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) · [Claude Bash tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/bash-tool) · [OpenCode tools](https://docs.opencode.ai/docs/tools/) · [OpenCode custom tools](https://opencode.ai/docs/custom-tools/).
