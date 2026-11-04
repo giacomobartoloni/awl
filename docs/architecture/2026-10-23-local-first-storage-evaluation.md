@@ -112,6 +112,26 @@ Using a central Git remote avoids a network of arbitrary pairwise synchronizers 
 
 The tradeoff is that every non-Git provider now needs an adapter connecting it to the Git hub; an external provider is not a drop-in alternative source of truth. Google Drive can contain ordinary Markdown files, but cannot natively consume Git commits, references or operation audit logs.
 
+### Worktree-shared configuration and storage (owner-confirmed 2026-11-04)
+
+The source-code Git repository and the awl-managed document Git repository have different responsibilities. A source repository may contain a versioned `.awl/project.yaml` and an ignored `.awl/local.yaml`; the actual managed document repository resides in user-level application data, **not** automatically in a source worktree or in `.awl/`.
+
+Proposed minimal resolution sequence for a command in a source Git worktree:
+
+1. Ask Git for the repository's common directory (for example, `git rev-parse --path-format=absolute --git-common-dir`); resolve the result safely against the invocation context. This directory is shared by linked worktrees, unlike their per-worktree Git directories.
+2. Read the current worktree's versioned `.awl/project.yaml`, if present; do not invent or rewrite it. Validate its project identity against the already established common project binding before permitting mutations.
+3. Read the **one canonical** personal config stored under the source Git common directory (illustrative path: `<git-common-dir>/awl/local.yaml`). An optional `.awl/local.yaml` symlink in any worktree may point to it, but neither symlink creation nor link availability is necessary for awl reads and writes. If a separately editable ordinary file exists at `.awl/local.yaml`, report the ambiguity rather than treating it as a second authority.
+4. Resolve applicable local overrides over project defaults. For author identity, use the effective Git identity from the source context unless awl-local settings override it. The precedence and consistency policy when Git supplies worktree-specific identity require explicit tests; do not read identity from awl's managed document repository by accident.
+5. Resolve the single managed local awl repository through the shared personal configuration or the default user-level application-data location. A storage override must never be silently different across worktrees of the same Git common directory.
+
+`.awl/local.yaml` is Git-ignored, and the user-level location holds managed repositories for multiple awl projects. No configuration copying, worktree watcher, background synchronizer, or central multi-tenant service is implied. Git branches may legitimately expose different revisions of `.awl/project.yaml`; incompatible project bindings should fail visibly instead of silently repointing the shared managed repository.
+
+**YAGNI / Clean Code boundary:** keep source-context discovery, effective configuration resolution, and managed-repository operations as distinct responsibilities, with testable behavior and explicit errors. Do not introduce an abstraction hierarchy, registry, symlink manager, or configuration merge engine until a concrete accepted requirement needs one.
+
+**Still open:** exact YAML keys/format, Git-ignore setup, paths on each OS, first-use initialization, projects without source Git, project-ID collision handling, symlink portability, Git worktree-specific user configuration, file locking and migration of pre-existing divergent `.awl/local.yaml` files. These are not approved implementation choices.
+
+References: [Git worktree configuration](https://git-scm.com/docs/git-worktree) · [Git configuration scopes](https://git-scm.com/docs/git-config).
+
 ## 4. Alternative history and rejected-for-now simplifications
 
 ### Previous Option B: Generic local snapshots/journal
