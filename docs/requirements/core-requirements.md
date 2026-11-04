@@ -59,7 +59,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
 | FR-04 | Core | Offer project-scoped listing, full and bounded document reads, creation and modification through awl without direct access to managed replica files. **Approved read behavior:** 1-based absolute physical-file line coordinates including frontmatter, optional pinned local Git revision across pages, and explicit truncation/continuation. Quantitative limits and public syntax remain open. |
 | FR-05 | Core | Support generic, typed YAML-frontmatter reads and mutations using **RFC 6901 JSON Pointer** for single-node addressing. Distinguish replacement, insertion at a list index, append, and removal; preserve unknown keys and unaffected content and reject unverifiable stale positional list edits. |
-| FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
+| FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; awl resolves current revisions internally, and callers need not pass any file revision. The final patch syntax is not yet selected. |
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
 | FR-08 | Core | Support ordered composites that **continue after individual operation failures**, reporting every outcome and a request-level correlation identifier. Commit successfully applied changes once per request when content changes. |
 | FR-09 | Core | Preserve locally accepted modifications in managed Git durably across restarts; do not silently discard changes awaiting publication to the authoritative Git remote. |
@@ -80,6 +80,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-24 | Core | In a source Git repository, support version-controllable `.awl/project.yaml` and a Git-ignored `.awl/local.yaml` entry point, resolving one authoritative personal configuration via the source repository's Git common directory for all linked worktrees. No replication or mandatory symlink. |
 | FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
 | FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
+| FR-27 | Core | Document creation/editing, generic YAML metadata mutations, and composite request members must not require or accept caller-supplied file revision references, commit SHA, `base_revision` or `expected_revision`. awl resolves Git revisions, validates content intent, and handles safe internal concurrency retries; unsafe semantic conflicts remain explicit. |
 
 ## 5. Non-functional requirements
 
@@ -104,7 +105,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | AC-01 | Configure two slugged projects with different authoritative remote Git repositories. | Each project resolves to its own local managed Git state and corresponding Git hub without conflating histories. |
 | AC-02 | Disconnect after initial synchronization and read a known document. | Its local Git version remains readable; Git hub publication/freshness limits are exposed. |
 | AC-03 | Modify a known document while offline; restart awl before reconnecting. | Change and its audit record survive; synchronization remains pending. |
-| AC-04 | Send multiple body-only edits for one document, including a stale-base edit with a safe exact unique match. | The resulting document retains frontmatter unchanged; safe edits can apply without forced reread, and ambiguous/unsafe ones return explicit errors. |
+| AC-04 | Submit multiple body-only edits without any file revision argument, even after a stale prior read. | awl evaluates against current managed content, preserves frontmatter, and safely applies valid targets without a caller-controlled revision; ambiguous/unsafe targets yield explicit document errors. |
 | AC-05 | Run a composite across several documents and cause its middle operation to fail. | Later operations still execute; all operation results are reported; one local Git commit contains the successful changes, if any. |
 | AC-06 | Exchange commits after offline changes and new authoritative Git commits. | The shared Git history is reconciled or an explicit conflict is returned; no silent overwrite. Detailed rules remain open. |
 | AC-07 | Edit nested YAML metadata through JSON Pointer, including objects and nested lists, without changing the body. | Pointer escaping and zero-based indexes resolve precisely; replacement never inserts; array insert/append/remove and unsafe stale-position conflicts are explicitly handled without rewriting unrelated content. |
@@ -134,6 +135,8 @@ Configuration acceptance candidates (2026-11-04; **not implemented or tested in 
 | AC-22 | Git provides a user name/email, then awl-local identity overrides them. | Git identity is used by default; configured overrides take precedence without changing Git config; missing identity is reported when required for a commit. |
 | AC-23 | A branch's `.awl/project.yaml` changes the awl project identity or repository target incompatibly. | awl signals the mismatch before writing; it does not silently redirect or merge unrelated histories. |
 | AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
+| AC-25 | A client edits a document or YAML metadata without reading it first and without providing a file revision. | awl obtains the current revision internally, validates explicit operation intent and either applies safely or reports a content-level error; no revision-token prompt. |
+| AC-26 | Two agents concurrently edit disjoint documents without revision references. | awl handles recoverable local revision races transparently through safe revalidation and bounded internal attempts, without surfacing Git CAS details. |
 
 ## 7. Architectural evaluation and open requirements
 
@@ -153,7 +156,7 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
 - Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
-- Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, and whether context, three-way merge or line/hash anchors are used. Read coordinate/revision behavior is selected; quantitative bounds and error edge cases are still open.
+- Detailed stale body-edit safety criteria; content/element-based conditions for indexed YAML writes; whether context, three-way merge or line/hash anchors are used. Caller-supplied file revision preconditions for mutations are **not allowed**; optional revision-pinned reads remain supported. Quantitative read limits and error edge cases are still open.
 - Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
 - Credentials, security model, actor identity, sharing, and key lifecycle.
 - Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
