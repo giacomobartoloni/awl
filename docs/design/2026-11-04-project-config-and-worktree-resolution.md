@@ -240,17 +240,17 @@ Do not initialize automatically on document read or when a new linked worktree a
 2. Build the candidate content **without changing the live managed ref**. Git objects are immutable; where an index is used for staging, give **each request its own temporary index** (or use another isolated tree construction mechanism). Do not share a mutable Git index or working tree across concurrent requests.
 3. Create a candidate commit `C` with parent `R` only when changes succeeded. This commit object is not yet a confirmed local change.
 4. Publish it conditionally, e.g. `git update-ref refs/heads/<managed-branch> <C> <R>`. Git accepts it only if the ref still equals `R`. If another writer published first, Git rejects the update; report a **request-level revision conflict**, not successful partial application.
-5. On a CAS conflict, do not blindly auto-merge or replay against an unknown revision. For the first increment, return a clear retryable `REVISION_CONFLICT` with the current revision. An agent or caller can reread and retry; a carefully revalidated automatic retry is a **later** optimization only if observed contention warrants it.
+5. On a CAS conflict, awl should **internally retry only when it can revalidate the request against the new head without changing its intended meaning**. This is the owner's explicit transparent-orchestration requirement. A small bounded retry policy for disjoint document edits is the minimal candidate; unsafe or exhausted retries return a domain-level conflict, not a raw Git/CAS error. See §10.
 6. Readers pin the Git revision they read and never combine data from two commits. Publication to the remote Git hub remains distinct from local CAS and must not take place while holding a local per-request lock (none is needed).
 7. A rejected candidate commit may leave Git objects not reachable from any ref; they are not accepted document changes and are subject to normal Git object lifecycle. Audit must record rejection separately and must not declare the candidate committed.
 
-**Git internal ref locking is not an awl lock manager.** `git update-ref` validates the expected old object ID and synchronizes ref mutation; it does *not* make an arbitrary sequence of read, edit and commit operations atomic. Building isolated candidates and publishing by CAS is what closes that gap. This approach does not promise that simultaneous non-overlapping writes both succeed; the later writer may need to retry. That conservative behavior is a conscious YAGNI tradeoff.
+**Git internal ref locking is not an awl lock manager.** `git update-ref` validates the expected old object ID and synchronizes ref mutation; it does *not* make an arbitrary sequence of read, edit and commit operations atomic. Building isolated candidates and publishing by CAS closes that gap. A bounded internal retry can allow concurrent non-overlapping writes to succeed without exposing Git details. A genuine semantic conflict or retry exhaustion remains an explicit request-level result.
 
 **Initialization is separate:** two worktrees trying first-time setup need one safe, short-lived **create-if-absent** publication of the canonical local binding, or an initialization-only OS coordination primitive if platform tests show it necessary. Do not introduce a lock around every document request just to solve setup races. If a setup contender loses, validate/reuse the winner's binding and repository; never silently overwrite the config or delete its data.
 
 **Why not a process lock around all operations?** It would introduce lock lifecycle, timeouts, crash handling, portability and lock contention into the hot path before there is evidence the additional serialization is needed. Keep it as a fallback if a concrete selected Git implementation has shared mutable state that cannot safely be isolated.
 
-**Validation required:** simultaneous same-base writers, a composite with successes and member failures followed by a losing CAS, read consistency, per-request temporary index isolation, abrupt process termination before/after ref publication, and concurrent first-time initialization. No awl runtime test has yet been executed.
+**Validation required:** simultaneous same-base writers on disjoint and overlapping documents, a composite with successes and member failures followed by a losing CAS and guarded replay, read consistency, per-request temporary index isolation, abrupt process termination before/after ref publication, and concurrent first-time initialization. No awl runtime test has yet been executed.
 
 Sources: [Git update-ref](https://git-scm.com/docs/git-update-ref) · [Git commit-tree](https://git-scm.com/docs/git-commit-tree) · [Git update-index](https://git-scm.com/docs/git-update-index).
 
@@ -271,4 +271,61 @@ The uppercase error strings are **candidate internal/public names**, not an appr
 
 ### 9.6 Owner review gates
 
-**Confirmed by the owner (2026-11-04):** effective Git identity follows the invoking worktree unless explicitly overridden by the shared canonical local configuration; proceed with the minimal YAML schema and persisted `binding`/`storage.localRepo` design baseline. **Still proposed:** conditional managed Git ref publication via CAS without a document-write lock; safe initialization-only create-if-absent, and error/atomicity details. No implementation is authorized.
+**Confirmed by the owner (2026-11-04):** effective Git identity follows the invoking worktree unless explicitly overridden by the shared canonical local configuration; proceed with the minimal YAML schema and persisted `binding`/`storage.localRepo` design baseline. **Additional owner requirement:** Git orchestration must be transparent to awl users, with safe recoverable races handled internally and real conflicts surfaced in application terms. **Still proposed:** the bounded retry policy, CAS implementation, initialization-only create-if-absent, and audit/recovery details. No implementation is authorized.
+
+
+## 10. User-facing Git orchestration — owner-confirmed goal, proposed mechanism
+
+**Owner-confirmed requirement (2026-11-04):** awl, not its human or agent caller, must orchestrate the managed Git storage mechanics. Users must not need to manually invoke `git update-ref`, inspect temporary index files, manipulate managed branches, coordinate repository locks, or resolve *technical* same-head races. This **does not** authorize silent content loss or imply that semantic conflicts and remote publication failures can always be healed automatically.
+
+### 10.1 Observable application contract (proposal)
+
+- A successful awl document request means its changes are committed in the managed **local** Git repository and durably readable at the returned revision. It does **not** imply successful remote publication.
+- Git refs, candidate commits, ref-lock failures and temporary staging remain private implementation details. Optional diagnostics may expose internal causes without making Git literacy a requirement.
+- A transient local race that is safely recoverable should be handled automatically within the **same submitted request**. Do not require a coding agent to independently orchestrate low-level Git retries.
+- If awl cannot preserve the submitted operation's intended semantics, return a **document/metadata-level conflict** with an actionable path, field or expected-versus-current revision; do not silently pick a winner.
+- Expose local-applied, Git-remote-published and optional satellite-projected states separately. No force-push, silent rollback, or assertion of successful publication after an ambiguous network failure.
+
+### 10.2 Minimal transparent local retry algorithm (proposal)
+
+1. Capture an initial immutable managed Git revision and evaluate the submitted operation/composite against it using request-isolated staging. The evaluation is *tentative* until its candidate commit is published through a conditional ref update.
+2. If CAS succeeds, finalize one local content commit (if there were changes), record the request outcome and return the resulting revision. Member-level failures of a composite remain reported, in order, as specified by the existing operation contract.
+3. If CAS fails because another awl writer moved the ref, reread the current revision **inside awl**. Identify whether the other writer changed documents or metadata that this request reads or modifies. Do not treat unchanged path names alone as sufficient if a request depends on other content.
+4. **Safe retry:** when the concurrent changes are disjoint from the request's read/write dependencies, reconstruct the *whole request* against the new revision, revalidate all operation preconditions, and attempt a new conditional commit. Same-document retries require the existing operation-specific stale-edit safety rules; never blindly replay a YAML list index, append, or non-idempotent mutation.
+5. Bound the retry count (a small fixed number, to be measured; an initial single internal retry is a candidate) to avoid starvation. Exhaustion or failed semantic validation yields a stable, actionable application-level conflict, not raw Git stderr.
+6. A losing candidate commit is **not** a successful local document change. Do not publish intermediate operation success or duplicate audit entries. Retain one request identity across internal attempts; distinguish retry attempts from the final accepted operation outcomes.
+7. Never repeat an externally visible side effect while retrying a content operation. Satellite export, remote push, external hooks and other integrations are outside the speculative local retry loop.
+
+**Composite safety:** because member operations can depend on earlier staged changes, re-evaluate the composite **from its beginning** on the new revision, preserving member order and continue-on-member-error policy. Report only final, persisted member outcomes; a successful tentative member from a rejected candidate must not be reported as committed. A request's final outcome can still be *partial* when some members fail and others are committed, but a request-level unreconciled conflict must not masquerade as successful partial persistence.
+
+### 10.3 User-observable examples (proposed)
+
+| Scenario | Internal awl behavior | What the caller observes |
+| --- | --- | --- |
+| Two agents edit different Markdown documents | One CAS wins; the other revalidates against the new revision and retries internally | Both requests can succeed with separate local revisions, no Git commands |
+| Two agents edit exactly the same target incompatibly | CAS revalidation detects changed or ambiguous target | Document conflict with affected path and next action; no overwrite |
+| Two agents edit different safe exact targets in one document | Revalidate uniqueness and stale-edit safety before replay | Automatic success **only if** operation contract proves safety; otherwise conflict |
+| A composite has a failed member, then a CAS race | Re-evaluate all ordered members against the new revision; commit final successful changes once | One final partial result and one local content commit, or request conflict if unsafe |
+| Network is offline after a local commit | Preserve local revision; leave remote publishing pending | "Saved locally; not yet published", with status or explicit later publish action |
+| Remote refuses a non-fast-forward push | Fetch/reconcile only when safely provable; no force-push or hidden history rewrite | Local changes remain saved; remote publication pending or conflict |
+| Process exits during internal attempt | Never report unconfirmed success; on recovery inspect the managed ref and audit/request correlation | Either a verified durable result or an explicit indeterminate/recovery state, not duplicate commits |
+
+### 10.4 Transparency is not an excuse to hide important state
+
+An error message should say what awl could not do and whether data is safe, e.g.:
+
+- `The document was modified concurrently and the requested edit is no longer safe. No changes from this request were saved.`
+- `Changes saved locally. Publication to the project Git remote is pending.`
+- `This project is already initialized from another worktree; using the existing local repository.`
+
+These are **illustrative messages**, not CLI output already approved. The public response format, stable error codes, retry budget, conflict policy for same-file edits, and exact audit/idempotency recovery protocol are still open. In particular, a crash after local ref publication but before writing a separate application audit record cannot be declared solved merely by CAS: the design needs a durable request identifier and an explicit reconciliation/recovery contract.
+
+### 10.5 YAGNI review boundary
+
+**Do now in design:** one request-scoped retry boundary, immutable Git revision reads, isolated candidate preparation, CAS publication, operation-specific safety validation, truthful local-vs-remote status and actionable user-facing conflicts.
+
+**Defer pending evidence:** daemon, distributed locks, generic merger framework, automatic recursive multi-branch merge, unlimited retries, global exactly-once orchestration, mandatory background sync, speculative auto-resolving of YAML array insertions or overlapping Markdown edits.
+
+A minimal vertical slice should demonstrate concurrent disjoint edits, genuine content conflict, composite tentative-vs-committed result correctness, an offline local success, and crash/indeterminate state detection before promising transparency at scale.
+
+Reference: [Git update-ref expected-old-value semantics](https://git-scm.com/docs/git-update-ref) · [Git commit-tree](https://git-scm.com/docs/git-commit-tree) · [Git push status](https://git-scm.com/docs/git-push).
