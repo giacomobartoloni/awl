@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-Provide a project-oriented, offline-first interface for reading and editing Markdown documents and their generic YAML-frontmatter metadata. AgentWorklog clients use awl's controlled API rather than directly editing the managed local replica. Changes can be made while offline and published to one authoritative Git remote per project. Optional satellite integrations (starting with Google Drive as a candidate) connect to that remote Git hub. Satellite synchronization direction and mechanics remain open.
+Provide a project-oriented, offline-first interface for reading, editing, indexing, and searching Markdown documents, while preserving generic YAML-frontmatter document operations. AgentWorklog clients use awl's controlled API rather than directly editing the managed local replica. Changes can be made while offline and published to one authoritative Git remote per project. Optional satellite integrations (starting with Google Drive as a candidate) connect to that remote Git hub. Satellite synchronization direction and mechanics remain open.
 
 ## 2. Agreed product boundaries
 
@@ -21,7 +21,7 @@ Provide a project-oriented, offline-first interface for reading and editing Mark
 - Document types and custom metadata keys have no fixed domain semantics in the CLI core. No Activity, Spec, Plan, or ProductPlan lifecycle commands are required.
 - Single requests and composites may include multiple document and metadata operations. Composites run operations in order, **continue after member errors**, and report every outcome. **One local Git content commit per request with successful modifications** records the resulting changes; no multi-request/distributed rollback requirement is implied.
 - Every applied change is associated with an auditable request/operation identity. Git commits may provide version history but do not by themselves capture attempted/failed operations or prove caller identity. Shared or tamper-resistant audit remains open.
-- No metadata query engine, shared _research/_guides handling, mandatory server, or synchronization daemon is assumed for the initial slice.
+- Project-scoped document indexing and lexical/full-text, semantic, and hybrid retrieval are **core capabilities**. Structured YAML metadata indexing/query/filtering, shared _research/_guides handling, a mandatory server, and a required synchronization daemon are not in the initial scope. No search engine or dependency has been selected.
 
 ## 3. Terminology
 
@@ -59,8 +59,11 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-16 | Core | Support nonsemantic operations on arbitrary document types and frontmatter fields; neither OKF nor worklog-specific fields are interpreted as mandatory workflow rules. |
 | FR-17 | Core | Make failure/restart recovery observable; global cross-document atomicity, distributed rollback, and ACID transactions are not required. |
 | FR-18 | Later | Offer a remote-agent/MCP interface using the same application operations, without defining the wire protocol now. |
-| FR-19 | Later | Optional OKF or project-defined validation, indexing, metadata query, or structural Markdown editing; no commitment to implement them initially. |
+| FR-19 | Core | Build and maintain a searchable, project-scoped index of managed Markdown documents as **derived state**, without mutating original content or replacing Git as document authority. Support recovery/rebuild of derived index state. |
 | FR-20 | Later | Support additional backend integrations as satellites of the authoritative remote Git hub, beginning with a Google Drive projection candidate; whether they support external-to-Git ingestion remains open. |
+| FR-21 | Core | Expose project-scoped **lexical/full-text, semantic, and hybrid document retrieval** with grounded document identities and useful excerpts. Mode-specific model provisioning, ranking, limits and public syntax require design and validation. |
+| FR-22 | Core | Make index availability and freshness relative to managed local document revisions observable, including pending, stale, failed, or rebuild-required states; never misrepresent old index hits as current Git content. |
+| FR-23 | Later | Structured frontmatter metadata indexing, filtering, discovery, and queries; optional OKF/project validation and structural Markdown editing. Generic YAML metadata **document operations** remain in scope via FR-05. |
 
 ## 5. Non-functional requirements
 
@@ -75,6 +78,8 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | NFR-07 — Testability | Verify operations, offline recovery, audit and synchronization against representative Markdown samples and backend capabilities. |
 | NFR-08 — Usability | CLI outputs should be predictable for humans and agents; composite responses should be machine-readable. |
 | NFR-09 — Performance | Avoid redundant downloads and unnecessary content transfer; set quantitative targets after a representative prototype. |
+| NFR-10 — Search safety | Indexes are disposable derived data; indexing and querying must not rewrite Markdown or leak files outside authorized project scope. |
+| NFR-11 — Search resilience | Offline lexical retrieval must be possible on initialized local state; semantic/hybrid model setup, offline behavior, degradation and resource budgets need explicit contracts and measurement. |
 
 ## 6. Acceptance scenarios to refine
 
@@ -94,14 +99,25 @@ Priority is indicative: Core means candidate first increment, Later means explic
 
 Owner-confirmed partial-read acceptance direction: AC-12 — 1-based full-file lines include frontmatter; AC-13 — an optional pinned local revision stays stable across pages; AC-14 — explicit incomplete/truncated result with continuation information on a size limit. Exact limits, public fields and long-line fallback remain to be designed.
 
+New search acceptance candidates (2026-11-04; **not executed**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-15 | Search documents in a locally initialized project with an exact phrase and a conceptual paraphrase. | Lexical and semantic/hybrid modes are addressable and return grounded project-relative document references. |
+| AC-16 | Modify a document through awl while an index already exists. | Results and index status distinguish current content from pending/stale indexing and support repair/rebuild. |
+| AC-17 | Search offline after initial local index/model setup. | Supported modes work without unannounced remote access; unavailable semantic models are reported explicitly. |
+| AC-18 | Attempt a query that filters by arbitrary YAML-frontmatter fields. | Structured metadata filtering is clearly unsupported in the initial search contract, never silently ignored. |
+| AC-19 | Index legacy Markdown with YAML frontmatter and existing Obsidian links. | Source documents are not rewritten, normalized, or migrated by indexing. |
+
 ## 7. Architectural evaluation and open requirements
 
-See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), and [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), plus [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
+See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), [QMD search/indexing assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md), [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), and [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
 
 **Owner-selected architectural direction, not an implemented or merged design:**
 - One authoritative Git remote per project, with optional secondary integrations connected in a hub-and-spoke topology.
 - Offline-first managed local Git replica.
-- Controlled API, generic metadata, auditable operations and composites.
+- Controlled API, generic metadata document operations, auditable operations and composites.
+- Indexing, lexical/full-text retrieval, semantic retrieval, and hybrid retrieval as core document capabilities; QMD is an **evaluation candidate**, not a selected implementation.
 - Google Drive is a candidate secondary satellite integration, not an alternative authoritative remote.
 
 **Open, explicitly deferred:**
@@ -117,6 +133,8 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
 - Public names/schema for JSON Pointer-based metadata operations, indexed-list preconditions and YAML formatting/alias preservation; read response serialization and quantitative bounds (the read coordinate model is approved); whether the CLI is initially the only interface.
 - Local snapshot lifecycle, retention, garbage collection, portability and backup.
+- Search-result contract, text scope (body only versus frontmatter as plain text), index revision/freshness representation, refresh triggers, ranking, model bootstrap, offline failures, and cross-project scope.
+- Search engine choice and integration boundary. No QMD, model runtime, database schema or mandatory daemon is approved; structured metadata search stays deferred.
 
 ## 8. Compatibility and migration
 
@@ -127,8 +145,9 @@ Current AgentWorklog documents remain user-owned. The existing vault convention 
 - Current implementation status: no awl CLI implementation; the GitHub default branch contained LICENSE only at inspection time (2026-10-23).
 - Existing working requirements draft: AgentWorklog/awl/Specs/2026-10-23-core-requirements-spec.md in the connected Google Drive vault.
 - Format reference: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md (OKF v0.2).
-- Repository-local durable requirements are **proposed in this draft PR**, not merged or approved.
+- Repository-local durable requirements are **proposed in this draft PR**, not merged or implemented.
+- **Owner-confirmed scope (2026-11-04):** indexing and lexical/semantic/hybrid search are core; structured metadata search and filtering are deferred; QMD is being assessed, not selected.
 
 ## 10. Next review gate
 
-Review this revised contract for managed local Git, one authoritative remote Git hub per project, and optional satellite integrations. Then scope focused experiments for Git publication, audit persistence, satellite projections and editing safety before selecting libraries or deployment tooling.
+Review this revised contract for managed local Git, one authoritative remote Git hub per project, and optional satellite integrations. Validate a minimal search/indexing contract and evaluate a pinned QMD build on representative Markdown without metadata filters; then scope focused experiments for Git publication, audit persistence, satellite projections and editing safety before selecting implementation libraries or deployment tooling.
