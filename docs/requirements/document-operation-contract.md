@@ -3,7 +3,7 @@
 **Status:** draft functional specification for review, **not an approved command/API schema**.  
 **Date:** 2026-10-23.  
 **Product:** AgentWorklog CLI (awl).  
-**Related:** [Core Requirements](core-requirements.md) · [Git Hub-and-Spoke Architecture Evaluation](../architecture/2026-10-23-local-first-storage-evaluation.md) · [YAML paths and partial reads research](../research/2026-10-23-yaml-paths-and-partial-reads.md).  
+**Related:** [Core Requirements](core-requirements.md) · [Git Hub-and-Spoke Architecture Evaluation](../architecture/2026-10-23-local-first-storage-evaluation.md) · [Search and QMD assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md) · [YAML paths and partial reads research](../research/2026-10-23-yaml-paths-and-partial-reads.md).  
 **Provenance:** The user's 2026-10-23 product discussion about LLM-agent edit tools, composite operations, local-first Git persistence, and a central remote Git hub.
 
 ## 1. Objective
@@ -22,10 +22,11 @@ This document proposes a **logical contract**. Operation identifiers and JSON/YA
 - A successful local operation must be distinguishable from remote Git publication and optional satellite propagation.
 - **Owner-selected decisions (2026-10-23):** body-only text edits; safely applicable exact edits may proceed despite stale read revisions; composites continue on member errors; one local Git content commit per request that results in changes.
 - User-owned content and legacy links/frontmatter are not implicitly migrated or normalized.
+- **Owner-confirmed scope (2026-11-04):** document indexing and lexical, semantic, and hybrid retrieval are core capabilities; structured YAML metadata search/filtering is deferred. Generic YAML metadata reads and mutations below are unaffected.
 
 ### Explicitly not specified here
 
-CLI syntax, Git object/branch layout, service/MCP interfaces, Git libraries, authentication, satellite integrations or their execution location, exact conflict algorithms, patch formats beyond candidate behavior, query/indexing, and deployment.
+CLI syntax, Git object/branch layout, service/MCP interfaces, Git libraries, authentication, satellite integrations or their execution location, exact conflict algorithms, patch formats beyond candidate behavior, **search/indexing API and engine details**, and deployment. The requirement for core search is selected; its concrete contract is not.
 
 ## 2. Logical resources and terms
 
@@ -63,10 +64,12 @@ This table describes **behavioral operations**, not finalized public method name
 | `composite.apply` | Project slug, ordered operations with IDs | Continue-on-error with per-operation outcomes + one resulting Git content commit when content changed | Partial completion is reportable, never silent |
 | `operation.status` / `project.sync_status` | Request ID or project slug | Audit and local/remote progress | Unknown request, unavailable status |
 | `document.history` | Project slug, document path | Relevant local history identifiers | Missing document/history unavailable |
+| `document.search` (candidate) | Project slug, text query, retrieval mode | Grounded document hits, excerpts, and index freshness/revision information | Index unavailable/stale, unsupported mode, missing local models |
+| `index.status` / `index.refresh` (candidates) | Project slug, optional rebuild context | Visibility and repair of derived index state | Index failure, unauthorized project, resource limit |
 
 All writes require a local Git-backed project state; offline writes **must not require remote network availability** once the project has been initialized locally.
 
-**Later / unselected:** unified-diff or Codex-style `apply_patch`, context/hunk matching, hashline editing, a semantic Markdown-section editor, metadata query, content search, document moves/deletes and higher-level worklog lifecycle operations. Do not imply these are implemented or forbidden forever.
+**Later / unselected:** unified-diff or Codex-style `apply_patch`, context/hunk matching, hashline editing, a semantic Markdown-section editor, **structured YAML metadata indexing/query/filtering**, document moves/deletes and higher-level worklog lifecycle operations. The core search/indexing requirement is selected, but operation names and search engine remain candidates. No implementation is implied.
 
 ## 4. Request and response concepts
 
@@ -395,6 +398,7 @@ These are **specification-level acceptance scenarios**, not implemented test res
 4. One Git **content commit per request** records all successful changes.
 5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
 6. `document.read` uses **1-based absolute file lines including frontmatter**, supports an **optional pinned local revision** across pages, and **reports incompleteness/continuation explicitly**.
+7. **2026-11-04:** project-scoped Markdown indexing and lexical, semantic and hybrid document search are **core** capabilities; structured metadata search is **deferred**, without changing YAML-frontmatter document operations. QMD is a candidate, not a selected dependency.
 
 ### Review next
 
@@ -403,16 +407,17 @@ These are **specification-level acceptance scenarios**, not implemented test res
 3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
 4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
 5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
+6. **Search/indexing:** define result identity and ranking, query modes, indexing/refresh lifecycle, revision freshness and offline-model failure behavior. Decide whether frontmatter is indexed as ordinary text or excluded, and evaluate [QMD](../research/2026-11-04-qmd-search-and-indexing-assessment.md) without assuming metadata filters or a specific runtime.
 
 ### Explicitly defer
 
 - Git library, Git internals, push cadence, hosting, and branch/ref conventions.
 - Connector execution/deployment location, satellite direction and sync infrastructure.
 - Contextual patches, hashline anchors, three-way merge/rebase.
-- Search/query engines, mandatory validation, migration of legacy Markdown, and later MCP/public CLI syntax.
+- **Selection and internals** of a search/query engine (including QMD), structured YAML metadata search/filtering, mandatory validation, migration of legacy Markdown, and later MCP/public CLI syntax. Indexing and content search themselves are **not deferred**.
 
 ## 13. Status and next step
 
 This document is a proposal added to an **unmerged GitHub draft PR**, not an approved operation specification. It narrows the interface discussion without locking implementation choices.
 
-**Suggested next task:** Review nested YAML path options and agent-oriented partial-read behavior before a small Git-backed vertical implementation plan. No code or tests are claimed by this document.
+**Suggested next task:** Review the search/indexing interface requirements and run a bounded QMD feasibility evaluation on representative local Markdown, while keeping existing nested-YAML and partial-read safety questions open. No code or tests are claimed by this document.
