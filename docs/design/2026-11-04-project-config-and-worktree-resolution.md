@@ -150,3 +150,115 @@ No new CLI command names, runtime, Git abstraction library, registry, background
 - [Git worktree: common versus worktree-specific config](https://git-scm.com/docs/git-worktree)
 - [Git config: includes and worktree settings](https://git-scm.com/docs/git-config)
 - [Owner-confirmed configuration requirements](../requirements/core-requirements.md)
+
+
+## 9. Focused design refinement (2026-11-04; pending owner review)
+
+This section refines the **candidate** schema, identity policy, initialization, and concurrency boundaries. It does not change the owner-confirmed requirements in §1, approve CLI syntax, or authorize implementation. Prefer a single obvious path over a generic configuration engine.
+
+### 9.1 Candidate minimal YAML v1
+
+`.awl/project.yaml` — version-controlled and shared:
+
+```yaml
+schema: 1
+project:
+  slug: my-project
+storage:
+  remote: git@github.com:team/my-project-worklog.git
+```
+
+`<git-common-dir>/awl/local.yaml` — canonical personal file; the optional worktree `.awl/local.yaml` is a link to this file:
+
+```yaml
+schema: 1
+binding:
+  slug: my-project
+  remote: git@github.com:team/my-project-worklog.git
+storage:
+  localRepo: /home/user/.local/share/awl/repos/my-project-c8f2a0
+# Optional identity override:
+# user:
+#   name: Example User
+#   email: example@example.com
+```
+
+**Recommended field ownership:**
+
+| Field | Source | Why |
+| --- | --- | --- |
+| `schema` | Both files | Explicit, inexpensive compatibility check; reject unsupported major format rather than guessing |
+| `project.slug` | `project.yaml` only | Public project address, not a filesystem-path identity |
+| `storage.remote` | `project.yaml` only | Authoritative shared Git remote; never override it per-worktree |
+| `binding.slug`, `binding.remote` | Canonical local file; generated during setup | Persist the identity accepted when the local repo was bound; this is a safety check, **not** another authority for project settings |
+| `storage.localRepo` | Canonical local file; assigned once at setup | Stable managed-repository path shared by worktrees, including after moving the source checkout |
+| `user.name`, `user.email` | Optional canonical local overrides | The only awl-owned human identity overrides; Git remains the default |
+
+Use explicit YAML mappings and strings, reject duplicate/unsupported schema keys and unsafe YAML tags, and report malformed files without rewriting them. No arbitrary YAML include, variable interpolation, environment templating, deep-merge framework, multi-profile selection, or secret store is proposed. The minimal `binding` repetition detects incompatible branch changes without a separate registry, state database or implicit remote matching. Remote comparison can start as strict literal comparison; treating different SSH/HTTPS spellings or repository renames as equivalent needs an intentional rebind operation rather than a speculative normalization algorithm. A remote URL embedding a credential must not be written to the shareable file.
+
+The `storage.localRepo` default should be assigned once, using a collision-resistant per-initialization suffix rather than the slug alone. Persist the resulting path in the canonical local file. Cross-platform application-data roots and exact suffix encoding remain implementation details. A manual localRepo path change is a requested relocation, not permission to silently initialize an empty replacement.
+
+**Precedence by setting, not by wholesale YAML merge:**
+
+- Shared remote and slug: only `project.yaml`; the local `binding` must match, not override them.
+- Managed repository path: canonical local file, or an explicitly persisted first-time default.
+- Commit identity: explicit invocation override (if such an option is eventually approved) > canonical `user` override > Git identity resolved from the invoking source worktree. No awl-global identity copy or auto-creation of a personal profile is required.
+- Missing values required for an operation must produce an explicit error; never silently use an identity from the managed worklog Git repository.
+
+### 9.2 Identity in different source worktrees
+
+Git `user.name` and `user.email` can differ between worktrees through `extensions.worktreeConfig`, `includeIf \"worktree:...\"`, or branch-conditioned configuration. **One canonical awl local file does not automatically imply one inherited Git identity.** The smallest Git-aligned policy is:
+
+1. Read the effective Git name/email in the **invoking source worktree** for each attribution-requiring request, including Git's applicable conditional/worktree configuration. Do not cache them at first setup.
+2. If `user` is specified in the canonical awl-local file, it overrides those Git values for every worktree; prefer an all-or-nothing name+email pair to avoid ambiguous mixed provenance.
+3. For a normal awl-authored content commit, use the resulting identity explicitly for Git author **and** committer, unless a separately approved operation requires distinct parties. The executing agent/harness is tracked separately as application provenance, not impersonated as the Git user.
+4. The audit should record the identity source (`awl-local` versus `git-source-worktree`) and invoking worktree/revision when available, without claiming the Git email is authenticated.
+
+**Alternatives considered:** pin a Git identity at initialization (becomes stale and stops inheriting Git updates), or ignore worktree-specific Git identity and force Git's shared common config (does not match how Git operates for the caller and would require bespoke behavior). Both are less attractive than native Git resolution with an optional shared override.
+
+**Implementation validation still required:** Git's environment-provided author/committer overrides versus Git config values, default fallback to OS username/hostname, and safe explicit author/committer injection into managed Git. Do not rely on unexpected Git fallback identities or confuse Git author attribution with authenticated actors.
+
+### 9.3 Explicit first-use initialization (candidate workflow)
+
+**Ordinary document reads and config resolution are side-effect-free.** Use an explicit initialization action; the public command name is not selected.
+
+1. Discover the source Git worktree root and the shared Git common directory. Reject unsupported/bare/non-worktree contexts with a clear diagnostic; non-source-Git projects require a separate project resolution path later.
+2. Read an existing `.awl/project.yaml` if present or prepare the smallest new file with requested slug and remote. Do not infer the worklog Git remote from the source repository's `origin`, overwrite a file, stage changes or create a source Git commit.
+3. Check that `.awl/local.yaml` is not tracked, that the source Git ignore rule applies (a root-relative `/.awl/local.yaml` entry is a candidate), and that an existing local entry is either absent or points at the canonical file. Print a safe corrective action when the ignore rule is missing; changes to an existing `.gitignore` must be explicit.
+4. Acquire a short-lived initialization lock associated with the **common directory**, then re-check canonical state. If another worktree already initialized the project, validate and reuse the existing binding and repository rather than creating another.
+5. For a new project association, allocate a unique managed-repository path under user application data, create the managed Git repository safely, and atomically install the canonical local configuration containing its persisted path and accepted slug/remote binding. Treat partial failure as an observable incomplete setup; do not silently delete, overwrite or switch a repository.
+6. Symlink creation is optional and separate from correctness. Do not copy personal configuration into other worktrees. Do not mutate source Git config.
+7. Verify both the persisted local binding and the managed repository identity before reporting success. Offline initialization can establish local state even when remote Git connectivity is unavailable; remote publication is a separate status.
+
+Do not initialize automatically on document read or when a new linked worktree appears. Changes to the shared project's identity or authoritative remote need explicit rebind/relocation with validation and no implicit destructive migration.
+
+### 9.4 Concurrent operations from different worktrees
+
+This is about access to one **local managed Git repository**, not real-time synchronization of `.awl/project.yaml`, and not Git remote publication.
+
+- **One writer per managed repository at a time.** A process-scoped local lock is the simplest candidate coordination primitive. Hold it for the read/validate/apply/commit portion of a document request, including a composite's ordered member operations and its one content commit. Do not put the lock in an individual source worktree.
+- **Readers use an immutable Git revision.** A read pinned to a commit need not block a writer; it must never splice together content from two revisions.
+- **Guard reference updates.** Git supports comparing the expected old object ID when updating a ref (`git update-ref <ref> <new> <old>`). An unexpected old ref produces an explicit conflict, not last-writer-wins. Git's native ref locks alone do not serialize a whole multi-operation awl request.
+- **Lock contention:** wait only for a defined bounded interval or fail with a retryable busy status; do not spin forever. An OS-released process lock is preferable to a persistent hand-rolled lockfile requiring stale-lock recovery. The precise portable primitive remains unselected.
+- **Crash and audit:** a process crash must not leave a permanently held lock or silently mark uncommitted work successful. Document content commit, durable failed/no-op operation audit, and local/remote publication have distinct guarantees; the application audit storage mechanism remains open.
+- **No remote network under the local content lock.** Push/fetch may take arbitrarily long. Coordinate local ref integration separately; a rejected non-fast-forward push is a remote divergence and must be reported rather than confused with local lock contention.
+- **Initialization is coordinated at the Git common directory; document mutations are coordinated at the shared managed repository.** These locks have different purposes. Avoid a general distributed lock manager or daemon.
+
+### 9.5 Proposed errors and minimum validation
+
+| Situation | Observable candidate error/behavior |
+| --- | --- |
+| Missing or malformed `project.yaml`, unsupported `schema` | `PROJECT_NOT_CONFIGURED` or `INVALID_PROJECT_CONFIG` |
+| Invalid/missing shared local binding after setup | `LOCAL_BINDING_MISSING` or `PROJECT_BINDING_CONFLICT` |
+| Unexpected independent `.awl/local.yaml` in a worktree | `LOCAL_CONFIG_AMBIGUOUS` |
+| Changed Git remote/slug across project branches | `PROJECT_BINDING_CONFLICT` before any write |
+| Missing/invalid Git identity when a commit needs it | `IDENTITY_UNAVAILABLE` |
+| An existing managed path is occupied by another project | `MANAGED_REPO_CONFLICT` |
+| Another process currently owns the managed write lock | `PROJECT_BUSY`, retryable |
+| Concurrent ref changed unexpectedly | `REVISION_CONFLICT` with current revision if safe to disclose |
+
+The uppercase error strings are **candidate internal/public names**, not an approved protocol. Test a main worktree, one linked worktree, two intentionally different Git worktree emails, a shared awl identity override, concurrent initialization, concurrent composite writes, crash during setup, and a source repository relocation. Do not choose language, Git binding, filesystem-lock library, or OS support matrix before the first bounded spike.
+
+### 9.6 Owner review gates
+
+The most consequential policy to confirm is that **Git identity follows the invoking worktree unless the canonical local file overrides both name and email**. The second is accepting `binding.slug`/`binding.remote` plus a once-assigned `storage.localRepo` in the canonical local file, rather than introducing a separate state registry. The third is serializing one managed-repo writer at a time for the first implementation, with optimistic Git ref checks and no long network operations under the lock. All three remain proposals in this document.
