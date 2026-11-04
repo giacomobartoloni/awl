@@ -432,9 +432,11 @@ This document is a proposal added to an **unmerged GitHub draft PR**, not an app
 **Suggested next task:** Review the search/indexing interface requirements and run a bounded QMD feasibility evaluation on representative local Markdown, while keeping existing nested-YAML and partial-read safety questions open. No code or tests are claimed by this document.
 
 
-## 14. CLI-first harness integration design (research proposal, 2026-11-04)
+## 14. CLI-first harness integration — owner-confirmed direction, proposed interface details (2026-11-04)
 
-**Owner direction:** optimize awl as a **CLI for coding agents and harnesses**, not as a specialized MCP service. These are candidate user-visible behaviors; no public command names or flag spellings are approved.
+**Owner-confirmed product decision (2026-11-04):** awl is an independent, **CLI-first and harness-agnostic** application optimized for both human terminal users and coding agents using authorized shell tools. It must not require MCP, a daemon, an SDK or harness-specific adapters. Its Git orchestration must remain transparent and write requests must not require caller-supplied file revisions. The **specific command names, flag spellings, serialized input/output envelopes, numeric exit codes and integrations below remain proposals**, not approved interfaces or implemented behavior.
+
+**Approved direction versus proposals:** A shell-executable, non-interactive, automation-friendly CLI is a product constraint. JSON on demand, structured stdin for composites, stdout/stderr separation, bounded outputs, documented error categories and CLI usability tests are recommended implementation-level contracts to refine. Do not interpret the examples below as an approved public command syntax.
 
 ### How coding-agent harnesses execute awl
 
