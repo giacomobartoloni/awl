@@ -110,7 +110,7 @@ The stored project binding, if adopted, needs its own minimal representation; do
 - **Branch disagreement:** compare identity against the previously initialized binding; report incompatibility and require an intentional rebind operation if the source project has genuinely changed.
 - **Unexpected `.awl/local.yaml` file or symlink:** fail with its path and next-step guidance. Do not synchronize, merge, replace or delete user files.
 - **Repository move / path change:** preserve the stored managed-repository association when available; relocation/migration is explicit. Do not silently start a fresh worklog history.
-- **Concurrent use by two worktrees:** protect the shared managed Git state from clobbering; use the smallest practical per-repository coordination boundary appropriate to request-level commits. The lock mechanism is not selected here.
+- **Concurrent use by two worktrees:** protect the shared managed Git state from clobbering. The refined proposal in §9.4 favors isolated request staging and a conditional Git ref update, without an awl-wide document-write lock.
 - **Unsupported filesystems / symlinks:** no link is required. The canonical file is read directly.
 - **Non-Git projects:** do not force a fake source repo merely to reuse this mechanism; provide a later explicit-project resolution design.
 
@@ -128,7 +128,7 @@ Keep configuration discovery, config validation and managed-document operations 
 | C-06 | Branch changes project slug or authoritative Git remote incompatibly | Explicit binding conflict before a write |
 | C-07 | Two source repositories use the same slug | No accidental managed-repository collision |
 | C-08 | Git identity with and without awl-local overrides | Correct attribution provenance; no mutation of Git settings |
-| C-09 | Two concurrent requests from different worktrees | Shared state remains safe; incompatible changes surface |
+| C-09 | Two concurrent requests from different worktrees | At most one request publishes a commit from a shared expected parent; a losing CAS reports a request-level conflict without declaring member successes durable |
 | C-10 | Source repository relocated on disk | Existing binding retained or explicit relocation error, never silent data fork |
 | C-11 | A symlink points outside the canonical path, or `.awl/local.yaml` is tracked | Error without following unrelated data or silently changing Git tracking |
 | C-12 | Ordinary read before initialization | No newly created state or hidden side effects |
@@ -139,7 +139,7 @@ Keep configuration discovery, config validation and managed-document operations 
 2. Initial setup/update commands and safe source-repository ignore configuration.
 3. Cross-platform application-data locations, canonical path handling, source repo moves, and Git version minimum.
 4. Effective Git identity when worktree-specific configuration differs, and author vs. committer attribution policy.
-5. Minimal concurrency/locking and atomic file initialization for shared managed state.
+5. Validate CAS-based concurrent commit publication, isolated staging and safe atomic first-time initialization before selecting any additional lock.
 6. Separate explicit-project configuration resolution when no source Git repository exists.
 
 No new CLI command names, runtime, Git abstraction library, registry, background sync, database, authentication model, or migration tool is selected by this proposal.
@@ -154,9 +154,9 @@ No new CLI command names, runtime, Git abstraction library, registry, background
 
 ## 9. Focused design refinement (2026-11-04; pending owner review)
 
-This section refines the **candidate** schema, identity policy, initialization, and concurrency boundaries. It does not change the owner-confirmed requirements in §1, approve CLI syntax, or authorize implementation. Prefer a single obvious path over a generic configuration engine.
+This section refines the schema, identity policy, initialization, and concurrency boundaries. **Owner confirmed on 2026-11-04**: (a) use the invoking source worktree's effective Git identity, subject to explicit canonical-local override, and (b) proceed with the minimal two-file YAML schema and persisted binding shown below as the design baseline. The initialization and concurrency mechanisms remain **proposals for review**. No CLI implementation, public commands, or runtime technology is approved.
 
-### 9.1 Candidate minimal YAML v1
+### 9.1 Minimal YAML v1 — owner-accepted design baseline
 
 `.awl/project.yaml` — version-controlled and shared:
 
@@ -205,7 +205,7 @@ The `storage.localRepo` default should be assigned once, using a collision-resis
 - Commit identity: explicit invocation override (if such an option is eventually approved) > canonical `user` override > Git identity resolved from the invoking source worktree. No awl-global identity copy or auto-creation of a personal profile is required.
 - Missing values required for an operation must produce an explicit error; never silently use an identity from the managed worklog Git repository.
 
-### 9.2 Identity in different source worktrees
+### 9.2 Identity in different source worktrees — owner-approved policy
 
 Git `user.name` and `user.email` can differ between worktrees through `extensions.worktreeConfig`, `includeIf \"worktree:...\"`, or branch-conditioned configuration. **One canonical awl local file does not automatically imply one inherited Git identity.** The smallest Git-aligned policy is:
 
@@ -232,17 +232,27 @@ Git `user.name` and `user.email` can differ between worktrees through `extension
 
 Do not initialize automatically on document read or when a new linked worktree appears. Changes to the shared project's identity or authoritative remote need explicit rebind/relocation with validation and no implicit destructive migration.
 
-### 9.4 Concurrent operations from different worktrees
+### 9.4 Concurrent operations from different worktrees — revised YAGNI proposal
 
-This is about access to one **local managed Git repository**, not real-time synchronization of `.awl/project.yaml`, and not Git remote publication.
+**Avoid an application-wide write lock for ordinary managed Git document requests.** Git already provides conditional reference updates; use a **compare-and-swap (CAS) on the managed branch ref** as the commit publication boundary. This is the simplest candidate consistent with safe concurrency, provided each request avoids shared mutable staging state.
 
-- **One writer per managed repository at a time.** A process-scoped local lock is the simplest candidate coordination primitive. Hold it for the read/validate/apply/commit portion of a document request, including a composite's ordered member operations and its one content commit. Do not put the lock in an individual source worktree.
-- **Readers use an immutable Git revision.** A read pinned to a commit need not block a writer; it must never splice together content from two revisions.
-- **Guard reference updates.** Git supports comparing the expected old object ID when updating a ref (`git update-ref <ref> <new> <old>`). An unexpected old ref produces an explicit conflict, not last-writer-wins. Git's native ref locks alone do not serialize a whole multi-operation awl request.
-- **Lock contention:** wait only for a defined bounded interval or fail with a retryable busy status; do not spin forever. An OS-released process lock is preferable to a persistent hand-rolled lockfile requiring stale-lock recovery. The precise portable primitive remains unselected.
-- **Crash and audit:** a process crash must not leave a permanently held lock or silently mark uncommitted work successful. Document content commit, durable failed/no-op operation audit, and local/remote publication have distinct guarantees; the application audit storage mechanism remains open.
-- **No remote network under the local content lock.** Push/fetch may take arbitrarily long. Coordinate local ref integration separately; a rejected non-fast-forward push is a remote divergence and must be reported rather than confused with local lock contention.
-- **Initialization is coordinated at the Git common directory; document mutations are coordinated at the shared managed repository.** These locks have different purposes. Avoid a general distributed lock manager or daemon.
+1. Read the current managed Git revision `R` at the start of the request and use it as a consistent base. A composite performs its ordered operations on the candidate tree derived from `R`, continuing after member-level errors according to the approved operation contract.
+2. Build the candidate content **without changing the live managed ref**. Git objects are immutable; where an index is used for staging, give **each request its own temporary index** (or use another isolated tree construction mechanism). Do not share a mutable Git index or working tree across concurrent requests.
+3. Create a candidate commit `C` with parent `R` only when changes succeeded. This commit object is not yet a confirmed local change.
+4. Publish it conditionally, e.g. `git update-ref refs/heads/<managed-branch> <C> <R>`. Git accepts it only if the ref still equals `R`. If another writer published first, Git rejects the update; report a **request-level revision conflict**, not successful partial application.
+5. On a CAS conflict, do not blindly auto-merge or replay against an unknown revision. For the first increment, return a clear retryable `REVISION_CONFLICT` with the current revision. An agent or caller can reread and retry; a carefully revalidated automatic retry is a **later** optimization only if observed contention warrants it.
+6. Readers pin the Git revision they read and never combine data from two commits. Publication to the remote Git hub remains distinct from local CAS and must not take place while holding a local per-request lock (none is needed).
+7. A rejected candidate commit may leave Git objects not reachable from any ref; they are not accepted document changes and are subject to normal Git object lifecycle. Audit must record rejection separately and must not declare the candidate committed.
+
+**Git internal ref locking is not an awl lock manager.** `git update-ref` validates the expected old object ID and synchronizes ref mutation; it does *not* make an arbitrary sequence of read, edit and commit operations atomic. Building isolated candidates and publishing by CAS is what closes that gap. This approach does not promise that simultaneous non-overlapping writes both succeed; the later writer may need to retry. That conservative behavior is a conscious YAGNI tradeoff.
+
+**Initialization is separate:** two worktrees trying first-time setup need one safe, short-lived **create-if-absent** publication of the canonical local binding, or an initialization-only OS coordination primitive if platform tests show it necessary. Do not introduce a lock around every document request just to solve setup races. If a setup contender loses, validate/reuse the winner's binding and repository; never silently overwrite the config or delete its data.
+
+**Why not a process lock around all operations?** It would introduce lock lifecycle, timeouts, crash handling, portability and lock contention into the hot path before there is evidence the additional serialization is needed. Keep it as a fallback if a concrete selected Git implementation has shared mutable state that cannot safely be isolated.
+
+**Validation required:** simultaneous same-base writers, a composite with successes and member failures followed by a losing CAS, read consistency, per-request temporary index isolation, abrupt process termination before/after ref publication, and concurrent first-time initialization. No awl runtime test has yet been executed.
+
+Sources: [Git update-ref](https://git-scm.com/docs/git-update-ref) · [Git commit-tree](https://git-scm.com/docs/git-commit-tree) · [Git update-index](https://git-scm.com/docs/git-update-index).
 
 ### 9.5 Proposed errors and minimum validation
 
@@ -254,11 +264,11 @@ This is about access to one **local managed Git repository**, not real-time sync
 | Changed Git remote/slug across project branches | `PROJECT_BINDING_CONFLICT` before any write |
 | Missing/invalid Git identity when a commit needs it | `IDENTITY_UNAVAILABLE` |
 | An existing managed path is occupied by another project | `MANAGED_REPO_CONFLICT` |
-| Another process currently owns the managed write lock | `PROJECT_BUSY`, retryable |
+| Concurrent first-time setup cannot claim the canonical binding | Explicit setup-in-progress or initialized-elsewhere result; validate and reuse safely |
 | Concurrent ref changed unexpectedly | `REVISION_CONFLICT` with current revision if safe to disclose |
 
 The uppercase error strings are **candidate internal/public names**, not an approved protocol. Test a main worktree, one linked worktree, two intentionally different Git worktree emails, a shared awl identity override, concurrent initialization, concurrent composite writes, crash during setup, and a source repository relocation. Do not choose language, Git binding, filesystem-lock library, or OS support matrix before the first bounded spike.
 
 ### 9.6 Owner review gates
 
-The most consequential policy to confirm is that **Git identity follows the invoking worktree unless the canonical local file overrides both name and email**. The second is accepting `binding.slug`/`binding.remote` plus a once-assigned `storage.localRepo` in the canonical local file, rather than introducing a separate state registry. The third is serializing one managed-repo writer at a time for the first implementation, with optimistic Git ref checks and no long network operations under the lock. All three remain proposals in this document.
+**Confirmed by the owner (2026-11-04):** effective Git identity follows the invoking worktree unless explicitly overridden by the shared canonical local configuration; proceed with the minimal YAML schema and persisted `binding`/`storage.localRepo` design baseline. **Still proposed:** conditional managed Git ref publication via CAS without a document-write lock; safe initialization-only create-if-absent, and error/atomicity details. No implementation is authorized.
