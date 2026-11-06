@@ -13,7 +13,7 @@ Provide a project-oriented, offline-first interface for reading, editing, indexi
 
 - A project is identified by a slug. The slug need not equal a repository or folder name.
 - Each project uses managed local Git and one authoritative **remote Git repository** as its shared history. One or more optional secondary integrations, including Google Drive as an initial candidate, connect to the remote Git hub. These are not co-equal authoritative backends.
-- A durable, locally managed **Git-based document replica** supports offline reads and changes; Git publication is asynchronous with respect to a local change. Optional satellite projections can lag independently.
+- A durable, locally managed **Git-based document replica** supports offline reads and changes; Git hub publication is **logically deferred** from local request acceptance. **Owner-confirmed 2026-11-06:** initial remote synchronization and derived index refresh are **explicit, recoverable invocations**, not automatic background work. Optional satellite projections can lag independently.
 - Clients access documents through awl. Direct filesystem mutation of its managed local state is not a supported editing interface. This is an API and audit boundary, not a claim of OS-level tamper resistance.
 - Markdown files remain portable, with YAML frontmatter as the metadata serialization. New AgentWorklog conventions target Open Knowledge Format (OKF) v0.2; legacy files are user-owned and must not be silently migrated.
 - OKF lifecycle status (draft, stable, deprecated) is distinct from the AgentWorklog extension workflow-status. No implicit mapping.
@@ -63,9 +63,9 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
 | FR-08 | Core | Support ordered composites that **continue after individual operation failures**, reporting every outcome and a request-level correlation identifier. Commit successfully applied changes once per request when content changes. |
 | FR-09 | Core | Preserve locally accepted modifications in managed Git durably across restarts; do not silently discard changes awaiting publication to the authoritative Git remote. |
-| FR-10 | Core | Record an auditable history of attempted and applied operations and their outcomes, including actor information as available; do not treat ordinary Git commits as a complete audit of failures, partial requests, or authenticated identity. |
+| FR-10 | Core | Keep a durable, shared, operation-level audit in **Git commit messages** for locally completed mutating requests, including ordered member failures, request identity, result and actor provenance (not authenticated identity). A content-changing completed request produces **one content commit with audit**; a completed nonconcurrency all-failed or no-op mutating request produces **one audit-only commit**, with unchanged document tree. **Owner-confirmed exception (2026-11-06):** a request rejected before publication for an unsafe concurrent local conflict produces **no commit, including no audit-only commit**, and no durable shared-Git audit event; report the rejection to the caller. Do not infer audit intent/outcomes from diffs alone. Exact audit schema, scope of pre-execution invalid requests and retention remain review gates. |
 | FR-11 | Core | Support exchange of local Git commits and shared history with the project's authoritative Git remote, distinguishing locally committed changes from remotely accepted changes. Satellite synchronization behavior is separately scoped. |
-| FR-12 | Core | Expose local commit, Git hub publication, and per-satellite propagation status where applicable; errors, unresolved changes and conflicts must be visible without silent overwrites. |
+| FR-12 | Core | Expose local commit, Git hub publication, and per-satellite propagation status where applicable; errors, unresolved changes and conflicts must be visible without silent overwrites. **Initial execution policy (owner-confirmed 2026-11-06):** local accepted mutations never wait on remote Git synchronization or search indexing; these are **explicitly invoked, recoverable, idempotent-or-safe-to-retry operations** that can be run by a later awl process. No automatic background worker, required daemon or periodic scheduling is promised. |
 | FR-13 | Core | Retain existing file contents and links unless an explicit modification succeeds. Never silently normalize, rewrite, move, overwrite, or delete user-owned Markdown. |
 | FR-14 | Core | Produce explicit per-operation error outcomes for nonexistent or ambiguous targets, malformed YAML, unavailable permissions, unsupported actions, and modifications that cannot be reconciled safely. |
 | FR-15 | Core | Constrain access to configured project scope and provider authorization; do not expose provider credentials or unrestricted local storage access. |
@@ -75,11 +75,12 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-19 | Core | Build and maintain a searchable, project-scoped index of managed Markdown documents as **derived state**, without mutating original content or replacing Git as document authority. Support recovery/rebuild of derived index state. |
 | FR-20 | Later | Support additional backend integrations as satellites of the authoritative remote Git hub, beginning with a Google Drive projection candidate; whether they support external-to-Git ingestion remains open. |
 | FR-21 | Core | Expose project-scoped **lexical/full-text, semantic, and hybrid document retrieval** with grounded document identities and useful excerpts. Mode-specific model provisioning, ranking, limits and public syntax require design and validation. |
-| FR-22 | Core | Make index availability and freshness relative to managed local document revisions observable, including pending, stale, failed, or rebuild-required states; never misrepresent old index hits as current Git content. |
+| FR-22 | Core | Make index availability and freshness relative to managed local document revisions observable, including pending, stale, failed, or rebuild-required states; never misrepresent old index hits as current Git content. Initial index refresh is **explicitly invoked** and recoverable; do not require index refresh to complete before acknowledging a local Git commit. Avoid redundant content reindexing on audit-only commits whose document tree is unchanged. |
 | FR-23 | Later | Structured frontmatter metadata indexing, filtering, discovery, and queries; optional OKF/project validation and structural Markdown editing. Generic YAML metadata **document operations** remain in scope via FR-05. |
 | FR-24 | Core | In a source Git repository, support version-controllable `.awl/project.yaml` and a Git-ignored `.awl/local.yaml` entry point, resolving one authoritative personal configuration via the source repository's Git common directory for all linked worktrees. No replication or mandatory symlink. |
 | FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
 | FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
+| FR-29 | Core | **Owner-confirmed 2026-11-06:** If concurrent modifications make final local publication unsafe, reject the **whole** submitted request without publishing **any** of its staged document changes **or any commit for that rejected request**, including audit-only commits; report a machine-readable conflict so the coding agent can reread and resubmit updated intent. Internal revision checks and safe retries belong to awl; the caller need not send a document revision. Ordinary composite member failures still continue under FR-08. A later Git remote push conflict does not undo a request already locally acknowledged. |
 
 ## 5. Non-functional requirements
 
@@ -135,6 +136,41 @@ Configuration acceptance candidates (2026-11-04; **not implemented or tested in 
 | AC-23 | A branch's `.awl/project.yaml` changes the awl project identity or repository target incompatibly. | awl signals the mismatch before writing; it does not silently redirect or merge unrelated histories. |
 | AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
 
+Request-level concurrency acceptance candidates (2026-11-06; owner-confirmed behavior, **not implemented or tested**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-30 | A composite stages changes to A and C, but another process changes its target in B incompatibly before local publication. | Reject the entire request; no staged document changes to A, B or C become visible; the managed Git head does **not** advance due to that request, including for audit; return conflict context for agent reread/resubmit. |
+| AC-31 | A composite contains an ordinary invalid member, with other valid members and no concurrent publication conflict. | Continue in order; record all member outcomes and commit the successful changes once. |
+| AC-32 | Two requests started on the same head change unrelated documents; one publishes first. | The other may safely revalidate/rebuild and publish, or return a truthful retryable conflict; never silently clobber an acknowledged change. |
+| AC-33 | A request is already committed locally, but synchronization encounters remote Git divergence. | Retain the local commit and audit; report remote pending/conflicted separately, without claiming the local request was aborted. |
+
+**Owner-confirmed 2026-11-06:** a locally completed mutating request with no document changes (ordinary all-failed or valid no-op) still creates exactly **one Git audit-only commit**; the user document tree remains unchanged. Requests completed with changes use one content+audit commit. A fatal concurrent publication conflict remains the explicit **no-commit** exception. Read-only calls, rejected pre-execution malformed requests and ordinary network retries do not create audit commits under the initial proposed scope; acceptance boundaries and exact serialization require review. See [request-level conflict design proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
+
+### Owner-selected implementation baseline (2026-11-06)
+
+For the **first implementation increment**, the owner selected **Go** as the CLI language/runtime and the **external Git CLI** as the Git integration mechanism (not an embedded Git engine). Go is required for building, but not as an installed runtime for users of an appropriately built binary; Git must be installed in supported execution environments. Invoke Git with structured argument vectors, never through shell interpolation. Git version compatibility, distribution targets, platform-specific lock primitives, durability/fsync profile, process environment controls, concrete CLI grammar and dependency choices remain to be validated; no implementation is present.
+
+These are explicit owner selections, **not implemented or demonstrated by the prior Python-only Git fixtures**. They do not override the local-first managed-Git/remote-Git-hub direction or choose a Git library, daemon, provider-neutral storage engine or micro-worktree mandate. See [request publication proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
+
+### Deferred execution contract (owner-selected 2026-11-06)
+
+- **Local acceptance:** finish validation, final audited Git commit (including audit-only commits for locally completed no-op/all-failed mutating requests) and guarded ref publication before replying. Return local success independently of downstream Git/QMD status. Fatal unsafe concurrent request conflicts still return **no commit**.
+- **Remote Git sync:** a separately invoked operation performs fetch, conservative reconciliation, push and remote confirmation. Never assume `git pull` or network success; a failed attempt leaves locally acknowledged history intact for an explicit later retry.
+- **Search index refresh:** a separately invoked operation updates a read-only controlled projection of the **published** managed Git document tree and any derived index (QMD is still an evaluation candidate, not approved). Expose freshness/checkpoints; index failures cannot undo local changes. Embedding refresh may have a separate availability state.
+- **Recovery and execution:** an invocation may block its **own caller** while running the operation; "deferred" is relative to the local mutation request, **not a promise that it will execute in the background after the CLI exits**. A subsequent explicit invocation resumes/retries from Git history and derived state. A durable per-request job queue, required worker, cron, watcher and daemon are **not selected** for the first increment. Exact commands, policies and automatic future scheduling remain open.
+
+Acceptance additions (proposed; no implementation tests):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| ASYNC-AC-01 | Complete a local changing or audit-only request while network is unavailable and QMD is not installed | Local request is confirmed if local Git publication succeeds; remote/index remain pending/unavailable, without blocking or rollback |
+| ASYNC-AC-02 | Explicitly invoke sync later after local commits have accumulated | Safe attempt advances or reports conflict/pending, with idempotent retry; no new mutating-request audit is created by a network retry |
+| ASYNC-AC-03 | Explicitly refresh index after multiple changing commits | Only committed document content is projected; resulting index revision is marked current only when fully verified |
+| ASYNC-AC-04 | Locally complete an audit-only commit with the same document tree | Remote sync may remain pending; content reindexing need not recur solely because the commit SHA changed |
+| ASYNC-AC-05 | End the CLI process without invoking sync or index refresh | Neither operation is falsely reported as running or completed; later invocation can determine needed work |
+| ASYNC-AC-06 | Two agents invoke the same sync/refresh concurrently | Operations are safely serialized or coalesced per project; no corruption and no false completed status |
+
 ## 7. Architectural evaluation and open requirements
 
 See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), [QMD search/indexing assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md), [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), and [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
@@ -149,10 +185,10 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 **Open, explicitly deferred:**
 - Direction of satellite synchronization: initial export-only projection versus optional import of externally authored changes into Git; execution location for satellite workers.
 - Local Git persistence implementation: command-line Git versus library, private object/worktree model, commit granularity, retention, and possible additional audit journal.
-- Git remote publication and scheduling, initial clone/bootstrap, partial history, and separate satellite projection semantics and freshness.
-- Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
+- Git remote conflict/reconciliation policy, initial clone/bootstrap, partial history, separate satellite projection semantics and freshness. **Initial remote publication and indexing trigger policy is no longer open:** explicit recoverable invocation without automatic worker; later scheduling remains deferred.
+- Exact safe-retry criteria and Git ref-conflict implementation; **owner-selected** fatal request-level concurrency conflict behavior is now recorded in FR-29 and AC-30–AC-33. Remote merge policy, external writer behavior, simultaneous creates and uncertain remote writes remain open.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
-- Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
+- Precise fatal request-level error and interruption behavior, individual document edit atomicity and request idempotency. **Durable Git audit-only commits for completed failed/no-op mutating requests are now owner-confirmed**, including the no-commit concurrent-rejection exception; exact schema, pre-execution rejection scope and retention still need review.
 - Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, and whether context, three-way merge or line/hash anchors are used. Read coordinate/revision behavior is selected; quantitative bounds and error edge cases are still open.
 - Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
 - Credentials, security model, actor identity, sharing, and key lifecycle.
