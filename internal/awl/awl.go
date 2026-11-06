@@ -13,17 +13,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 )
 
 const managedRef = "refs/heads/awl"
-
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 type diagnostic struct {
 	Code    string `json:"code"`
@@ -66,20 +61,6 @@ type audit struct {
 	Status      string   `json:"status"`
 	ActorSource string   `json:"actor_source"`
 }
-type binding struct {
-	Slug      string
-	Remote    string
-	LocalRepo string
-}
-type project struct {
-	Root      string
-	Common    string
-	Slug      string
-	Remote    string
-	GitDir    string
-	UserName  string
-	UserEmail string
-}
 type entry struct {
 	Mode   string
 	OID    string
@@ -106,6 +87,9 @@ func coded(err error) *diagnostic {
 	return &diagnostic{"INTERNAL_ERROR", err.Error()}
 }
 
+// Run executes the experimental awl command and reports a process exit code.
+// It accepts streams explicitly so CLI behavior can be tested without relying
+// on global standard input and output variables.
 func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	c := &cli{stdout: out, stderr: errOut, stdin: in}
 	// Only a leading global --project is recognized in this experimental parser.
@@ -114,10 +98,10 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		args = args[2:]
 	}
 	if len(args) == 0 {
-		return c.emitError(fail("USAGE", "expected init, read, create, edit, or apply"))
+		return c.emitError(fail("USAGE", "expected init, remote, read, create, edit, or apply"))
 	}
 	name, args := args[0], args[1:]
-	if name == "read" || name == "create" || name == "edit" {
+	if name == "read" || name == "create" || name == "edit" || name == "remote" {
 		args = pathFlagsFirst(args)
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -128,13 +112,27 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		remote := fs.String("remote", "", "authoritative worklog Git remote for new configuration")
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-			return c.emitError(fail("USAGE", "init accepts --slug, --remote, --json"))
+			return c.emitError(fail("USAGE", "init accepts --slug, optional --remote, --json"))
 		}
 		p, e := initialize(*slug, *remote, c.explicit)
 		if e != nil {
 			return c.emitError(e)
 		}
 		return c.emit(result{Status: "initialized", Project: p.Slug})
+	case "remote":
+		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
+		if e := fs.Parse(args); e != nil || fs.NArg() != 2 || fs.Arg(0) != "add" {
+			return c.emitError(fail("USAGE", "remote add requires one Git remote URL, optionally --json"))
+		}
+		p, changed, e := addRemote(fs.Arg(1), c.explicit)
+		if e != nil {
+			return c.emitError(e)
+		}
+		status := "remote_added"
+		if !changed {
+			status = "remote_unchanged"
+		}
+		return c.emit(result{Status: status, Project: p.Slug})
 	case "read":
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		if e := fs.Parse(args); e != nil || fs.NArg() != 1 {
@@ -218,7 +216,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		return c.writeRequest(req)
 	default:
-		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, read, create, edit, apply"))
+		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, read, create, edit, apply"))
 	}
 }
 
@@ -329,147 +327,6 @@ func readInput(in io.Reader, src string) ([]byte, error) {
 	return b, nil
 }
 
-func git(dir string, env []string, input []byte, args ...string) ([]byte, error) {
-	opts := []string{}
-	if dir != "" {
-		opts = append(opts, "--git-dir="+dir)
-	}
-	opts = append(opts, args...)
-	cmd := exec.Command("git", opts...)
-	cmd.Env = gitEnv(env)
-	if input != nil {
-		cmd.Stdin = bytes.NewReader(input)
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	b, e := cmd.Output()
-	if e != nil {
-		return nil, fmt.Errorf("git %q failed: %w: %s", args, e, strings.TrimSpace(stderr.String()))
-	}
-	return b, nil
-}
-func gitEnv(extra []string) []string {
-	ret := []string{}
-	for _, x := range os.Environ() {
-		k, _, _ := strings.Cut(x, "=")
-		if strings.HasPrefix(k, "GIT_") {
-			continue
-		}
-		ret = append(ret, x)
-	}
-	return append(ret, extra...)
-}
-func gitText(dir string, env []string, input []byte, args ...string) (string, error) {
-	b, e := git(dir, env, input, args...)
-	return strings.TrimSuffix(string(b), "\n"), e
-}
-func gitSource(root string, args ...string) ([]byte, error) {
-	a := append([]string{"-C", root}, args...)
-	s, e := gitText("", nil, nil, a...)
-	return []byte(s), e
-}
-func source() (string, string, error) {
-	cwd, e := os.Getwd()
-	if e != nil {
-		return "", "", e
-	}
-	root, e := gitSource(cwd, "rev-parse", "--show-toplevel")
-	if e != nil {
-		return "", "", fail("PROJECT_NOT_RESOLVED", "not inside a source Git worktree")
-	}
-	common, e := gitSource(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if e != nil {
-		return "", "", fail("PROJECT_NOT_RESOLVED", "cannot determine Git common directory")
-	}
-	return string(root), string(common), nil
-}
-func identity(root string) (string, string, error) {
-	name, e := gitSource(root, "config", "user.name")
-	if e != nil || len(name) == 0 {
-		return "", "", fail("IDENTITY_UNAVAILABLE", "configure source Git user.name")
-	}
-	email, e := gitSource(root, "config", "user.email")
-	if e != nil || len(email) == 0 {
-		return "", "", fail("IDENTITY_UNAVAILABLE", "configure source Git user.email")
-	}
-	return string(name), string(email), nil
-}
-func configRead(file string, allowed map[string]bool) (map[string]string, error) {
-	b, e := os.ReadFile(file)
-	if e != nil {
-		return nil, e
-	}
-	m := map[string]string{}
-	scope := ""
-	seenSections := map[string]bool{}
-	for _, raw := range strings.Split(string(b), "\n") {
-		s := strings.TrimSpace(raw)
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		if strings.HasSuffix(s, ":") && raw == s {
-			scope = strings.TrimSuffix(s, ":")
-			if seenSections[scope] {
-				return nil, fail("INVALID_CONFIG", "duplicate YAML section")
-			}
-			seenSections[scope] = true
-			if !allowed[scope] {
-				return nil, fail("INVALID_CONFIG", "unknown config section")
-			}
-			continue
-		}
-		name, v, ok := strings.Cut(s, ":")
-		if !ok {
-			return nil, fail("INVALID_CONFIG", "malformed YAML field")
-		}
-		key := strings.TrimSpace(name)
-		if strings.HasPrefix(raw, "  ") && scope != "" {
-			key = scope + "." + key
-		} else if raw != s {
-			return nil, fail("INVALID_CONFIG", "unsupported YAML indentation")
-		} else {
-			scope = ""
-		}
-		if !allowed[key] {
-			return nil, fail("INVALID_CONFIG", "unknown YAML field: "+key)
-		}
-		if _, duplicate := m[key]; duplicate {
-			return nil, fail("INVALID_CONFIG", "duplicate YAML field: "+key)
-		}
-		value := strings.TrimSpace(v)
-		if value == "" || strings.ContainsAny(value, "\n\r#\"'{}[]") || strings.HasPrefix(value, "!") {
-			return nil, fail("INVALID_CONFIG", "unsupported YAML scalar: "+key)
-		}
-		m[key] = value
-	}
-	if m["schema"] != "1" {
-		return nil, fail("INVALID_CONFIG", "expected schema: 1")
-	}
-	return m, nil
-}
-func parseShared(path string) (string, string, error) {
-	m, e := configRead(path, map[string]bool{"project": true, "storage": true, "schema": true, "project.slug": true, "storage.remote": true})
-	if e != nil {
-		return "", "", e
-	}
-	slug, remote := m["project.slug"], m["storage.remote"]
-	if !slugPattern.MatchString(slug) || remote == "" {
-		return "", "", fail("INVALID_CONFIG", "missing or invalid slug/remote")
-	}
-	return slug, remote, nil
-}
-func parseLocal(path string) (binding, error) {
-	m, e := configRead(path, map[string]bool{"binding": true, "storage": true, "schema": true, "binding.slug": true, "binding.remote": true, "storage.localRepo": true})
-	if e != nil {
-		return binding{}, e
-	}
-	b := binding{m["binding.slug"], m["binding.remote"], m["storage.localRepo"]}
-	if !slugPattern.MatchString(b.Slug) || b.Remote == "" || !filepath.IsAbs(b.LocalRepo) {
-		return b, fail("INVALID_CONFIG", "incomplete local binding")
-	}
-	return b, nil
-}
-
 func safePath(raw string) (string, error) {
 	if raw == "" || strings.Contains(raw, "\\") || filepath.IsAbs(raw) || strings.ContainsRune(raw, '\x00') || strings.Contains(raw, ":") {
 		return "", fail("INVALID_PATH", "project-relative Markdown path required")
@@ -488,16 +345,3 @@ func randomID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 func hash(data []byte) string { b := sha256.Sum256(data); return hex.EncodeToString(b[:]) }
-func flock(file string) (func(), error) {
-	f, e := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
-	}
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); e != nil {
-		f.Close()
-		return nil, e
-	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
-}
-
-// The rest of the local Git plumbing is implemented in gitstore.go.
