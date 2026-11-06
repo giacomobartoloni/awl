@@ -114,11 +114,12 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	case "init":
 		slug := fs.String("slug", "", "project slug for new configuration")
 		remote := fs.String("remote", "", "authoritative worklog Git remote for new configuration")
+		repoDir := fs.String("repo-dir", "", "absolute path for a new managed bare Git repository")
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-			return c.emitError(fail("USAGE", "init accepts --slug, optional --remote, --json"))
+			return c.emitError(fail("USAGE", "init accepts --slug, optional --remote, --repo-dir, --json"))
 		}
-		p, e := initialize(*slug, *remote, c.explicit)
+		p, e := initialize(*slug, *remote, *repoDir, c.explicit)
 		if e != nil {
 			return c.emitError(e)
 		}
@@ -292,7 +293,7 @@ func pathFlagsFirst(args []string) []string {
 func requestedJSONErrorMode(args []string) (seen, enabled bool) {
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
-		case arg == "--slug" || arg == "--remote" || arg == "--input" || arg == "--request-id":
+		case arg == "--slug" || arg == "--remote" || arg == "--repo-dir" || arg == "--input" || arg == "--request-id":
 			if i+1 < len(args) {
 				i++
 			}
