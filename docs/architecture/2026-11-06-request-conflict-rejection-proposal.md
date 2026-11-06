@@ -269,4 +269,4 @@ A no-change audit-only commit **advances the authoritative local ref and affects
 
 These are **new acceptance proposals**, not new observations from the previous **Python** fixture. The owner selected the high-level behavior and technology, but not a fixed CLI schema, Git version, OS support guarantee, exact message format, dependency or implementation timeline.
 
-**Coordination risk:** Draft PR #2 introduces `FR-27` and `AC-25`–`AC-29` identifiers also used for different requirements/scenarios in this PR #4. Reconcile those IDs and their semantics before either PR is merged; do not silently renumber another PR's work or treat both proposed documents as already integrated.
+**Coordination update:** Draft PR #2 reserves proposed `FR-27`–`FR-28` and `AC-25`–`AC-29` for distinct requirements. To avoid ambiguous IDs, this PR #4's own **unmerged** core-requirements additions were renumbered to **`FR-29` and `AC-30`–`AC-33`**, without modifying PR #2. Re-check numbering and semantics against the latest target branch before either proposal is merged; documentation IDs are not evidence that either draft is implemented.
