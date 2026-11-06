@@ -115,7 +115,35 @@ func validateOptionalLocalLink(root, common string) error {
 	return nil
 }
 
-func initialize(slug, remote, explicit string) (project, error) {
+// validateRepoDir accepts an explicit new bare-repository location, not a
+// base directory. The parent must already exist, and symlinked parents are
+// rejected so initialization cannot silently redirect the chosen location.
+func validateRepoDir(path, root, common string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.TrimSpace(path) != path ||
+		strings.ContainsAny(path, "\x00\r\n\t#\\\"'{}[]") {
+		return fail("INVALID_REPO_DIR", "--repo-dir requires a clean absolute path compatible with the local binding")
+	}
+	parent := filepath.Dir(path)
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil || resolved != parent {
+		return fail("INVALID_REPO_DIR", "--repo-dir parent must exist without symlink redirects")
+	}
+	st, err := os.Lstat(parent)
+	if err != nil || !st.IsDir() {
+		return fail("INVALID_REPO_DIR", "--repo-dir parent must be an existing directory")
+	}
+	if pathWithin(root, path) || pathWithin(common, path) {
+		return fail("INVALID_REPO_DIR", "--repo-dir must be outside the source worktree and its Git directory")
+	}
+	return nil
+}
+
+func pathWithin(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	root, common, e := source()
 	if e != nil {
 		return project{}, e
@@ -127,6 +155,11 @@ func initialize(slug, remote, explicit string) (project, error) {
 	}
 	if explicit != "" && slug != "" && explicit != slug {
 		return project{}, fail("PROJECT_CONFLICT", "explicit project does not match init slug")
+	}
+	if repoDir != "" {
+		if e = validateRepoDir(repoDir, root, common); e != nil {
+			return project{}, e
+		}
 	}
 	if e = noSymlinkDir(filepath.Join(common, "awl")); e != nil {
 		return project{}, e
@@ -183,6 +216,9 @@ func initialize(slug, remote, explicit string) (project, error) {
 		if bind.Slug != slug || bind.Remote != remote {
 			return project{}, fail("PROJECT_CONFLICT", "canonical project binding conflicts with source configuration")
 		}
+		if repoDir != "" && repoDir != bind.LocalRepo {
+			return project{}, fail("PROJECT_CONFLICT", "--repo-dir cannot relocate an initialized project")
+		}
 		if _, e = os.Stat(bind.LocalRepo); e != nil {
 			return project{}, fail("MANAGED_REPO_MISSING", "configured managed repository is missing")
 		}
@@ -194,19 +230,31 @@ func initialize(slug, remote, explicit string) (project, error) {
 	} else if !os.IsNotExist(e) {
 		return project{}, e
 	}
-	data, e := appDataHome()
-	if e != nil {
-		return project{}, e
+	dest := repoDir
+	if dest == "" {
+		data, err := appDataHome()
+		if err != nil {
+			return project{}, err
+		}
+		base := filepath.Join(data, "awl", "repos")
+		if err = os.MkdirAll(base, 0700); err != nil {
+			return project{}, err
+		}
+		nonce, err := randomID()
+		if err != nil {
+			return project{}, err
+		}
+		dest = filepath.Join(base, slug+"-"+nonce)
+	} else {
+		// Only a new, explicitly named directory is accepted. Never let
+		// git init --bare reuse or modify an existing user-owned path.
+		if err := os.Mkdir(dest, 0700); err != nil {
+			if os.IsExist(err) {
+				return project{}, fail("REPO_DIR_EXISTS", "explicit repository directory already exists")
+			}
+			return project{}, fail("INVALID_REPO_DIR", "cannot create explicit repository directory: "+err.Error())
+		}
 	}
-	base := filepath.Join(data, "awl", "repos")
-	if e = os.MkdirAll(base, 0700); e != nil {
-		return project{}, e
-	}
-	nonce, e := randomID()
-	if e != nil {
-		return project{}, e
-	}
-	dest := filepath.Join(base, slug+"-"+nonce)
 	if _, e = gitText("", nil, nil, "init", "--bare", dest); e != nil {
 		return project{}, e
 	}
