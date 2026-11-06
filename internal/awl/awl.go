@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -69,6 +70,8 @@ type entry struct {
 }
 type cli struct {
 	jsonOut  bool
+	errorJSONSeen bool
+	errorJSON bool
 	stdout   io.Writer
 	stderr   io.Writer
 	stdin    io.Reader
@@ -101,6 +104,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, or apply"))
 	}
 	name, args := args[0], args[1:]
+	c.errorJSONSeen, c.errorJSON = requestedJSONErrorMode(args)
 	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "remote" {
 		args = pathFlagsFirst(args)
 	}
@@ -282,6 +286,30 @@ func pathFlagsFirst(args []string) []string {
 	return append(options, positional...)
 }
 
+// requestedJSONErrorMode preserves an explicit structured-error preference when
+// flag.Parse stops at an earlier invalid option. Known value-taking options
+// must not cause their literal "--json" argument to enable JSON output.
+func requestedJSONErrorMode(args []string) (seen, enabled bool) {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--slug" || arg == "--remote" || arg == "--input" || arg == "--request-id":
+			if i+1 < len(args) {
+				i++
+			}
+		case arg == "--json" || arg == "-json":
+			seen, enabled = true, true
+		case strings.HasPrefix(arg, "--json=") || strings.HasPrefix(arg, "-json="):
+			_, value, _ := strings.Cut(arg, "=")
+			parsed, err := strconv.ParseBool(value)
+			seen = true
+			// Even a malformed --json value signals a request for a structured
+			// parsing error. A valid explicit false disables it.
+			enabled = err != nil || parsed
+		}
+	}
+	return seen, enabled
+}
+
 // strictJSON refuses unknown fields and concatenated values. Duplicate-key
 // rejection remains a separate input-contract review gate for this spike.
 func strictJSON(data []byte, target any) error {
@@ -335,7 +363,11 @@ func (c *cli) emit(r result) int {
 }
 func (c *cli) emitError(err error) int {
 	d := coded(err)
-	if c.jsonOut {
+	jsonError := c.jsonOut
+	if c.errorJSONSeen {
+		jsonError = c.errorJSON
+	}
+	if jsonError {
 		c.encode(result{Status: "error", Error: d})
 	} else {
 		fmt.Fprintf(c.stderr, "awl: %s: %s\n", d.Code, d.Message)
