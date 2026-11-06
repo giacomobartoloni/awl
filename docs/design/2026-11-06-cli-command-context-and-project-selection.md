@@ -125,3 +125,20 @@ In a source Git worktree, setup should validate or prepare `.awl/project.yaml`, 
 5. **Keep PRs separate:** PR #2 configuration/worktrees; PR #4 concurrency/audit; PR #5 QMD evaluation; this document supplies a **cross-cutting CLI-facing proposal** for eventual reconciliation, not a backdoor merge of their unmerged requirements.
 
 **Evidence limit:** This document records the user's CLI-context decision and derives a safe interface proposal from existing repository and AgentWorklog sources. **No CLI implementation, runtime parser, integration test, init/bootstrap, Git commit from awl, search index, merge or ADR** is claimed.
+
+
+## 9. Owner-selected local-only bootstrap and later remote setup (2026-11-06)
+
+**Owner-selected:** `awl init` may create the managed Git project **without a remote**. `awl remote add <git-url>` then configures the first authoritative **Git** remote explicitly, with no automatic fetch, push, search-index refresh or daemon. Both command spellings are implemented only as a **bounded experimental Go CLI** in [PR #7](https://github.com/giacomobartoloni/awl/pull/7); their final flag/parser/exit-code design remains reviewable.
+
+```sh
+# Within an initialized source Git worktree:
+awl init --slug muse                   # local-only bootstrap
+awl create Activities/one.md --input -  # valid offline write
+awl remote add git@example.invalid:team/muse-worklog.git  # configuration only
+# awl sync is separate and is not implemented by this experiment.
+```
+
+Remote setup must preserve existing local documents, the managed Git head and request audit. Re-adding the same URL is idempotent; conflicting replacement is rejected and left for a future migration policy. Source `.awl/project.yaml` and the Git-common-dir canonical binding both reflect the optional URL; interrupted two-file config updates remain a recovery/durability design gate.
+
+**Do not conflate sync modes:** the planned remote is Git authority; rsync and rclone are candidate satellite transports, not automatically interchangeable remote backends. See [PR #8](https://github.com/giacomobartoloni/awl/pull/8). Out-of-source-repository `--project` lookup remains explicitly deferred.
