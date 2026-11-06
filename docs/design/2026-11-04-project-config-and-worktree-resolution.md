@@ -364,3 +364,27 @@ At execution time, awl obtains the current managed revision itself, applies oper
 ### Design scope
 
 This requirement changes the **mutation request contract**, not the owner-approved revision-pinned read contract, Git's internal optimistic concurrency, per-request content commits, the visibility of local/remote publication states, or the separate application audit. No new command syntax, automatic semantic merger, lock manager, or implementation dependency is selected.
+
+
+## 12. Owner-selected local-only initialization and later Git remote configuration (2026-11-06)
+
+**Status:** owner-confirmed product behavior, with a bounded Go implementation under review in [experimental PR #7](https://github.com/giacomobartoloni/awl/pull/7). The implementation remains experimental, not merged or a production-ready initialization protocol.
+
+- An awl project inside a source Git repository **may be initialized without an authoritative Git remote**. The existing `.awl/project.yaml` and canonical Git-common-dir `awl/local.yaml` keep the accepted project slug, managed local repository identity and optional remote fields. In the current minimal schema, the absent `storage.remote` and `binding.remote` mean **local-only**, not malformed configuration.
+- The experimental **`awl remote add <git-url>`** command can configure the authoritative Git remote later, including when the project already contains locally accepted Markdown/audit commits. It performs **no network fetch/push**, no source Git commit and no new document audit commit.
+- Repeating the identical URL is idempotent; attempting to replace a different existing URL is explicitly rejected. Existing local Git history, project identity and managed repository path are retained. A remote change/migration policy is a separate future review decision.
+- The source worktree shared configuration and canonical private binding need to agree. The experimental command updates two config files separately; same-URL explicit retries repair the two expected one-sided interrupted states. This is **not** a crash-atomic two-file transaction or proof against out-of-band config edits. Preserve error visibility and do not silently rebind.
+- For the initial slice, the configured URL is a **Git-authority endpoint**. It does not implicitly select rsync, rclone, bidirectional file synchronization, a provider-neutral authoritative store or satellite export. See [sync modes design proposal in PR #8](https://github.com/giacomobartoloni/awl/pull/8) for those **unapproved** options.
+- First-use source Git discovery and linked-worktree sharing remain unchanged. The owner explicitly deferred `--project <slug>` resolution outside the source repository; optional remote configuration is **not** a mechanism for global project lookup.
+
+### Additional acceptance proposals (not full portability/crash tests)
+
+| ID | Scenario | Expected behavior |
+| --- | --- | --- |
+| CONFIG-AC-13 | First `init` with project slug but no remote | Initialize one local managed Git repo; read/write and audit work offline; no remote/network side effect |
+| CONFIG-AC-14 | Add a Git remote after locally accepted document changes | Same managed repository/head, unchanged document bytes, matching shared/canonical remote settings; no implicit sync |
+| CONFIG-AC-15 | Retry identical remote, try a different URL | Idempotent same URL; fail closed on different configured URL, without changing history |
+| CONFIG-AC-16 | Interrupt between two config updates | Explicit identical retry can repair the narrow observed partial state; no false atomicity claim |
+| CONFIG-AC-17 | Git identity is unavailable after project initialization | Reads and remote configuration still work; creating new audited document commits continues to require an effective identity |
+
+The listed Go tests in PR #7 were run on Linux/amd64 only; no real remote Git, Windows/macOS, rsync or rclone synchronization is claimed.
