@@ -68,3 +68,73 @@ Do not expose QMD index files, `qmd://` identifiers, generated projections, exte
 **Not selected:** QMD itself, a particular version/adapter, a mandatory daemon, storage schema, index format, model set, query syntax, ranking, frontmatter text inclusion, refresh scheduling, or cross-project defaults.
 
 Next action: compare a pinned released QMD build against representative awl Markdown fixtures and the scenarios above. The result should inform an implementation-independent search contract and a later explicit engine-selection decision. No implementation or benchmark has been executed for this assessment.
+
+
+## 7. Reassessment on 2026-11-06: QMD is the first engine to trial
+
+**Decision status:** The owner proposed QMD and requested an evaluation before implementation. This is an evidence-based **preferred candidate for a bounded integration spike**, **not** an approved mandatory dependency or an implemented backend. The 2026-11-06 owner selections of **Go + external Git CLI** for awl's initial mutation CLI remain in force. QMD would be a *separate search component*, not the local document authority and not part of the concurrent Git write transaction.
+
+### 7.1 Sources rechecked
+
+- Verified [upstream QMD repository](https://github.com/tobi/qmd), [release v2.8.3 (2026-08-16)](https://github.com/tobi/qmd/releases/tag/v2.8.3), [v2.8.3 README](https://github.com/tobi/qmd/blob/v2.8.3/README.md), and [package manifest at v2.8.3](https://github.com/tobi/qmd/blob/v2.8.3/package.json) on 2026-11-06. Package declares MIT license and Node >=22. The README also documents Bun >=1.0.0. New features seen in upstream **main** must not be silently attributed to the released tag.
+- GitHub [core requirements FR-19, FR-21, FR-22](../requirements/core-requirements.md) require a **derived** project-scoped index; lexical, semantic, and hybrid search; and explicit freshness relative to managed Git revisions. FR-23 defers structured arbitrary YAML-frontmatter filtering. The generic YAML edit operations stay independently in scope.
+- Current [first-slice plan in AgentWorklog](https://drive.google.com/file/d/1buh36I4TnCtWIr3EEakN9kqds0wg9yMS/view) proposes Git-local mutation first; full search is separate from that first slice.
+
+### 7.2 Fit and important constraints
+
+| Concern | Observed upstream capability | awl consequence |
+| --- | --- | --- |
+| Lexical search | QMD \`search\`, BM25 via SQLite FTS5; JSON output | Strong fit for no-model keyword retrieval if an index exists |
+| Semantic search | QMD \`vsearch\`, local GGUF embedding model | Fits the requested mode **after explicit model provisioning**, not guaranteed on fresh offline installation |
+| Hybrid retrieval | QMD \`query\`, lexical/vector fusion, expansion and reranking | Fits the requested mode, but depends on local models and extra runtime cost |
+| Go/CLI deployment | QMD is Node/Bun-based (Node >=22), contains native SQLite/vector and llama.cpp-related dependencies | A Go awl binary remains native but **search has an additional executable/runtime and model deployment story**; a true single-binary distribution is not established |
+| Model footprint | README defaults: approximately 300 MB embedding + 640 MB reranker + 1.1 GB query-expansion GGUFs | Roughly **2 GB** combined disk download before full-featured operation; budget CPU/RAM/VRAM and download permissions separately |
+| Source index | Collections refer to filesystem directories and QMD maintains its own SQLite index | awl's Git blobs/trees are authoritative. A controlled **per-project projection** of committed Markdown, not a per-request writable source worktree, may be needed for QMD indexing |
+| Index freshness | QMD exposes \`status\`, \`update\`, \`embed\` and diagnostics, but does not intrinsically prove correspondence to an awl Git head | awl must track last successfully indexed Git commit, pending/failure state, and query freshness; never label stale results as current |
+| Result identity | QMD reports collection/document paths or \`qmd://\` IDs | awl translates to canonical project-relative document identities and revision-aware excerpts; never expose cache locations as authoritative paths |
+| Configuration and hooks | QMD config supports collection update shell commands, arbitrary scoped roots and project-local overrides with trust controls | Use **awl-owned isolated config** and allowlisted projection roots; never execute unapproved update hooks or consume user-owned \`.qmd\` config implicitly |
+| YAML metadata | Development-main metadata extraction/filtering exists; release-tag behavior is different and arbitrary nested YAML query is not the approved awl scope | Do not depend on unreleased metadata features; preserve frontmatter untouched |
+
+**Source distinction:** The table describes upstream documentation and design inference; it is **not** a runtime result on representative awl documents.
+
+### 7.3 Minimal candidate integration
+
+\`\`\`text
+awl (Go) ── controlled Git read/mutation ──> managed authoritative Git history
+     |
+     └── search orchestration (outside write/CAS critical section)
+              |
+         committed Git snapshot S
+              |
+         awl-owned, scoped, reproducible Markdown projection
+              |
+         QMD CLI subprocess (pinned release; private index/config)
+              |
+         derived SQLite index + optional local vector models
+              |
+         awl search result: project path, snippet, indexed_revision=S,
+                            freshness=current|stale|pending|failed
+\`\`\`
+
+- Prefer **one QMD subprocess boundary** for the spike, with structured arguments/JSON parsing; no Node SDK embedding into Go, mandatory MCP server, daemon, extra provider abstraction, or a second document authority.
+- Do not index private request staging or partially applied composite members. Reindex **after** successful local Git publication and separately after successful remote history reconciliation. Do not block accepted Git writes on QMD/model failures. Coalesce repeated refreshes rather than running embeddings inside the local CAS lock.
+- Start with a **read-only scoped projection** of already committed Markdown; avoid indexing the source coding repository, the full user home, audit caches or arbitrary provider paths. A bare Git store cannot be assumed to expose a filesystem collection directly to QMD.
+- Store a **derived** Git revision checkpoint only after verified QMD refresh; consider conservative stale status during refresh/failure/crash. A search at revision S must not claim to reflect newer committed Git state H unless S=H and the index is validated. Search results must not rewrite user-owned Markdown.
+- Treat installed QMD, native runtime dependencies and model caches as a **separate provisioning requirement** from a Go binary. Lexical search should remain usable offline with an existing local index even if AI models are absent; semantic/hybrid modes must fail clearly or explicitly degrade. No surprise downloads during ordinary search.
+- The current QMD release's \`--index\` / \`QMD_CONFIG_DIR\` settings can be investigated to isolate per-project state; no specific CLI invocation or config file format is selected yet.
+
+### 7.4 Falsifiable spike and review gates
+
+Use the **released v2.8.3 tag pinned exactly** on representative Markdown files, not a floating \`main\` checkout. Record the installed executable version, OS, Node/Bun runtime, SQLite/native dependencies and local model variants.
+
+1. **Fresh install and offline setup:** install/launch on agreed target platforms, run lexical indexing/query without model downloads; explicitly test offline semantic/hybrid behavior before and after authorised provisioning. Record disk, RAM, CPU, initial download and cold-start costs.
+2. **Markdown fidelity and scope:** include existing AgentWorklog documents with YAML comments/aliases, CRLF/LF, Unicode, Obsidian links, duplicate names, irrelevant non-Markdown files and path/permission attacks. Verify **no source byte changes** and no out-of-scope indexing.
+3. **Search quality:** labelled exact-keyword, Italian/English paraphrase, semantic and hybrid queries over a representative multi-project corpus. Compare lexical/semantic/hybrid recall, precision/ranking and empty/negative cases. Do not invent a quality target without an agreed corpus.
+4. **Freshness:** commit, no-op/audit-only commit, rename, delete, restored file and remote history integration. Demonstrate last-indexed **content tree/revision** mapping, explicit stale/pending/failure responses, no orphaned hits falsely labelled current, and rebuild after corruption.
+5. **Isolation and security:** separate projects with same relative path, disallow external QMD config and update shell hooks, stop model auto-downloads until authorised, handle symlinks and untrusted frontmatter.
+6. **Concurrent workload:** many awl local commits during queued QMD refreshes and simultaneous read queries. Verify Git mutation remains independent of QMD failure, no SQLite partial results presented as current, bounded refresh coalescing and idempotent repair.
+7. **Output contract and dependency failure:** inspect v2.8.3 JSON output schema, canonical path/snippet mapping, missing QMD/Node/native library, model missing or version mismatch, timeout, crash, and index migration/rebuild behavior.
+
+**Decision:** If the spike passes these gates at acceptable distribution and resource cost, **select QMD as the first search engine**, keeping Git as the only content authority and the QMD database disposable. If its runtime dependency or snapshot/projection burden defeats the product's deployment goals, reconsider a Go-native lexical fallback or a narrower initial search implementation as a new documented tradeoff; **do not preimplement parallel engines**.
+
+**Not yet done:** no pinned QMD installation, fixture indexing, search relevance evaluation, native-model provisioning test, benchmark, awl runtime integration, or OS-matrix validation is claimed by this reassessment.
