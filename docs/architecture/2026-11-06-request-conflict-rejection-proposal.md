@@ -3,7 +3,7 @@
 **Status:** proposed design for review, not implemented, verified, or an ADR.  
 **Date:** 2026-11-06.  
 **Product:** AgentWorklog CLI (`awl`), not the pre-existing AgentWorklog Markdown convention set.  
-**Owner-confirmed behavior:** 2026-11-06 discussion: a concurrent conflict that `awl` cannot safely resolve must be returned to the coding agent; no requested document modification is published; the agent rereads and submits revised changes.  
+**Owner-confirmed behavior:** 2026-11-06 discussion: a concurrent conflict that `awl` cannot safely resolve must be returned to the coding agent; **no commit is made for the rejected request, including no audit-only commit**; the agent rereads and submits revised changes.  
 **Baseline:** [Core requirements](../requirements/core-requirements.md), [document/operation contract](../requirements/document-operation-contract.md), [Git hub architecture](2026-10-23-local-first-storage-evaluation.md).  
 **Other proposals:** [PR #2](https://github.com/giacomobartoloni/awl/pull/2) and [PR #3](https://github.com/giacomobartoloni/awl/pull/3) remain distinct draft proposals.  
 **Worklog provenance:** `AgentWorklog/awl/Specs/2026-11-06-concurrent-git-audit-design-spec.md` (revised commit-message audit) and `AgentWorklog/awl/Specs/2026-11-06-audit-consistency-and-crash-recovery-research.md`.
@@ -13,7 +13,7 @@
 **Confirmed observable requirements:**
 
 1. `awl` must not silently overwrite ambiguous concurrent edits or choose the last writer when the same Markdown/YAML content is modified incompatibly.
-2. If a **request-level concurrency/publication conflict** cannot be resolved safely, the **whole request fails** without making **any of its staged document changes visible**. The coding agent receives enough context to reread affected documents and submit an updated request.
+2. If a **request-level concurrency/publication conflict** cannot be resolved safely, the **whole request fails** without publishing any staged document changes **or any Git commit for that rejected request**. The coding agent receives enough context to reread affected documents and submit an updated request. No audit-only commit is permitted on this rejection path.
 3. The CLI handles internal Git revision checks; the mutation caller need not supply a document revision ID. Reads can still be explicitly revision-pinned when requested.
 4. A composite **continues after ordinary member-level failures** and can publish its successful members in one content-changing Git commit. The new whole-request conflict rule is a **separate fatal boundary**, not a repeal of continue-on-member-error.
 5. Local commit acceptance and later Git remote publication are distinct. A remote rejection **must not roll back a locally acknowledged request**.
@@ -21,14 +21,14 @@
 
 **Proposed implementation direction, not owner-selected mechanism:** stage a request against one immutable Git tree, construct a candidate tree/commit without changing the shared working tree, and publish via one conditional update of the managed project ref. A short cross-process writer lock or bounded compare-and-swap retries may be used if safety tests justify them. A per-request temporary Git branch or micro-worktree remains an **alternative**, not a requirement.
 
-**Unresolved:** exact public error encoding, bounded retry count, audit treatment for rejected requests, local durability profile, request-id policy, source-Git/worktree bootstrap details, and remote merge guarantees. No implementation, benchmark or crash proof exists.
+**Decided 2026-11-06:** rejected request-level concurrency conflicts produce **no commit and no durable shared-Git audit record**; the response alone carries rejection details. **Unresolved:** exact public error encoding, bounded retry count, nonconcurrency failed/no-op audit policy, local durability profile, request-id policy, source-Git/worktree bootstrap details, and remote merge guarantees. No implementation, benchmark or crash proof exists.
 
 ## 2. Definitions and publication boundary
 
 - **Request:** the complete ordered operation list submitted to `awl`, with correlation/identity.
 - **Member failure:** a definite validation or action failure of one operation evaluated against the request's current coherent staged state; it does not modify that operation's document, and later members continue.
 - **Concurrent conflict:** the request's starting snapshot/assumptions became invalid through another committed change and its original intent cannot be **proved** safe on the new head, including stale YAML positional edits, contradictory same-target edits, rename/delete interactions and uncertain identity.
-- **Request-level abort:** no final commit **containing any of this request's staged document changes** advances the authoritative managed local head. Private candidate Git objects may temporarily exist but are unreachable and not user-visible. Whether a separate *audit-only* commit records the rejected attempt is a distinct open policy.
+- **Request-level abort:** **no Git commit is published or recorded in shared history for the rejected request**, including audit-only commits. Its staged document changes do not become visible. Candidate objects might exist as unreachable temporary Git objects under optimistic staging, but are **not commits in the published history**. In a lock-first publication experiment a conflict should be detected before even constructing a candidate commit object.
 - **Locally acknowledged:** the request's final content and complete per-member audit are published and durable under the selected Git/OS profile; a lost CLI response does not negate publication.
 - **Remote pending/conflicted:** the request may already be locally acknowledged but not yet integrated into the remote hub. A push rejection is **not** a locally aborted request.
 
@@ -80,13 +80,14 @@ Illustrative envelope only; command names, field spellings and exit codes are **
   "code": "CONCURRENT_REQUEST_CONFLICT",
   "applied": false,
   "document_changes_published": false,
+  "commit_created": false,
   "conflicting_documents": ["Specs/api.md"],
   "retry": "reread_and_resubmit",
   "message": "Another request changed this document; the submitted edit is no longer provably safe."
 }
 ```
 
-- `applied: false` describes the request's **document effects**, not the possible presence of unreachable candidate objects or a separately authorized audit-only rejection record.
+- `applied: false` and `commit_created: false` mean this request **did not publish a Git commit at all**, including for audit. No persisted Git audit is promised for the rejected attempt; returned diagnostics can be kept by the caller. A crash/uncertain local ref outcome is a separate status and must never be mislabeled as a definitive no-commit conflict.
 - An agent **must reread** current documents and compose a revised operation request; it must not repeatedly submit an obsolete positional patch without reconsidering its intent.
 - If a request identifier is stable for idempotency, **a changed payload must not reuse the same identifier**; a distinct retry request should have a new identifier (and may cite the original in an optional correlation field).
 - The CLI should not oblige a caller to choose Git merge strategies, manually manage branches, read `.git` metadata or provide revision tokens for mutation.
@@ -117,7 +118,7 @@ Both require head revalidation. Prefer no-checkout only if fidelity, path handli
 
 ## 7. Audit, remote synchronization and safety boundaries
 
-**Audit:** Recent owner discussion supports a compact, versioned audit **in the Git commit message**, avoiding a tracked file for each request. This remains a *design candidate* and no exact schema is approved. An unresolved request-level conflict leaves no published document effect. Whether that rejected attempt generates an audit-only commit is open: doing so advances the shared Git history and incurs an additional publication race, while omitting it leaves an unpersisted rejected attempt. The existing FR-10 audit-of-attempts requirement must be reconciled explicitly before implementation; do not silently weaken it.
+**Audit:** Recent owner discussion supports a compact, versioned audit **in the Git commit message**, avoiding a tracked file for each request. This remains a *design candidate* and no exact schema is approved. **Owner-selected exclusion:** an unresolved **request-level concurrent conflict returns an error and produces NO Git commit whatsoever for that request**, including no audit-only commit. Its failed attempt is consequently **not** durable in shared Git history. This is an explicit, reviewed exception to the older blanket FR-10 all-attempts wording; successfully published composites still audit each member's success/failure. Whether completed all-failed/no-op **nonconcurrency** requests warrant audit-only commits is a separate open question.
 
 **Remote Git:** Keep existing local-first + authoritative Git hub topology until separately revised. A locally committed request is never discarded because of a rejected remote push. Remote branch divergence can be surfaced as pending/reconciliation-required; only provably safe integration may advance the remote. Do not force-push, automatically choose a winner for same-document ambiguity, or equate local CAS success with remote acknowledgement. Multiple remote branches or a per-agent remote branch model are possible future evaluations, not selected components of this local conflict contract.
 
@@ -140,7 +141,7 @@ Both require head revalidation. Prefer no-checkout only if fidelity, path handli
 | RC-09 | Process terminates immediately after ref publication, before reply | On retry/status query the original audited committed outcome is discovered; no duplicate application |
 | RC-10 | Remote push rejected after accepted local request | Local content/audit retained, clear `remote_pending/conflict`, no request-level `applied:false` |
 | RC-11 | Agent rereads after conflict and submits a new payload/request ID | Updated intent is evaluated against current snapshot and accepted if safe |
-| RC-12 | Failure-only or conflict-only request with no content changes | User document tree unaffected; audit-only commit policy is explicit and tested after selection |
+| RC-12 | Rejected concurrent conflict, including a composite with staged successful members | No user document change **and no audit-only or content commit for the rejected request**; commit count and managed ref are unchanged by that request; caller receives conflict details |
 | RC-13 | Same source repository invoked from two linked worktrees | Same managed awl repository is used, with independent request staging and safe publication |
 | RC-14 | Case-only rename, delete/edit, symlink escape or backlink-sensitive rename | Fail closed on ambiguity; no wrong-document mutation or silent migration |
 
@@ -150,7 +151,7 @@ These scenarios are requirements/experiment proposals, **not executed tests**. C
 
 - **Owner-confirmed:** return a fatal request-level concurrent conflict without publishing any staged document changes; the coding agent rereads and resubmits. Retain ordinary partial composite behavior.
 - **Recommended minimum spike:** one authoritative local Git ref, isolated non-checkout staging if feasible, short conditional publication, bounded safe retries, explicit conflict errors; do not build a dynamic persistence strategy interface.
-- **Open:** audit-only persistence of rejected attempts; exact identity/response schema; CAS versus lock policy; platform durability; proof of safe same-document retries; remote branch policy.
+- **Owner-confirmed:** no commit of any kind for concurrently rejected requests; only the response conveys that rejected attempt. **Open:** audit of completed nonconcurrency all-failed/no-op requests; exact identity/response schema; CAS versus short lock policy; platform durability; proof of safe same-document retries; remote branch policy.
 - **Defer:** mandatory micro-worktree per request, general three-way semantic auto-merger, CRDT engine, daemon, database audit authority, provider-neutral local storage, remote per-agent branch fleet and automatic distributed rollback.
 
 **Provenance:** Owner discussion on 2026-11-06 and inspected repo docs/research. The present PR changes documentation only. No `awl` code, test execution, measured performance or architectural ADR is claimed.
