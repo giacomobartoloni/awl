@@ -89,7 +89,7 @@ Document path arguments are **project-relative document paths**, regardless of w
 
 In a source Git worktree, setup should validate or prepare `.awl/project.yaml`, check that `.awl/local.yaml` cannot be accidentally tracked, establish the canonical local association via the common Git directory, and provision/reuse **one** awl-managed Git repository under user application data. Never silently rewrite existing user files, `.gitignore`, source Git config or worklog content. A linked worktree invoking `init` must discover and reuse an existing compatible binding, not create a duplicate.
 
-**Open:** how a new project's slug and remote are provided during first initialization (flags, config-first, or safe optional prompt); how stand-alone projects not backed by source Git are initialized; whether a remote can be initially omitted; and whether `--project` selects a pre-existing binding during setup or a separate `--slug`/positional input identifies a **new** project. Do not overload a selection flag with implicit create semantics without review.
+**Owner-selected:** a Git remote **may be omitted during initial project setup** and added explicitly later. **Open:** how a new project's slug and any optional remote are provided (flags, config-first, or safe optional prompt); how stand-alone projects without source Git are initialized; and whether `--project` selects a pre-existing binding during setup or a separate `--slug`/positional input identifies a **new** project. Do not overload a selection flag with implicit create semantics without review.
 
 ## 6. Process, publication and synchronization guarantees
 
