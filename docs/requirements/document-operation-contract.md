@@ -271,7 +271,7 @@ A composite is **one request containing ordered, heterogeneous operations**; it 
 
 This is not an ACID transaction mechanism and does not require rollback across separately accepted requests. If final Git persistence fails, **none** of the staged operations may be reported as durably `applied`; a failure/uncertain outcome must be returned with recoverable diagnostics. The handling of interruption and retry IDs remains open.
 
-**Owner-selected request-level concurrency rule (2026-11-06):** If the managed local head changes while the request is being prepared, awl may revalidate and rebuild the **whole original request** only when the intended modifications remain provably safe. If a concurrent same-target, YAML position, rename/delete or similar conflict cannot be resolved safely, **abort the entire request before publication**. None of its staged document edits may become visible, even when some composite members had provisionally succeeded. Return an explicit request-level conflict instructing the coding agent to **reread the current documents and submit revised operations**. This fatal publication conflict is **not** an ordinary per-member error and does **not** change the continue-on-member-error rule.
+**Owner-selected request-level concurrency rule (2026-11-06):** If the managed local head changes while the request is being prepared, awl may revalidate and rebuild the **whole original request** only when the intended modifications remain provably safe. If a concurrent same-target, YAML position, rename/delete or similar conflict cannot be resolved safely, **abort the entire request before publication without creating any commit for it, including an audit-only commit**. None of its staged document edits may become visible, even when some composite members had provisionally succeeded. Return an explicit request-level conflict instructing the coding agent to **reread the current documents and submit revised operations**. This fatal publication conflict is **not** an ordinary per-member error and does **not** change the continue-on-member-error rule.
 
 This guarantee is scoped to the **local** request publication boundary. A later rejected remote push does not undo an already acknowledged local commit. It remains pending/conflicted in synchronization status. Git private staging, optional micro-worktrees and ref-CAS/lock choices remain implementation proposals, not part of the public operation grammar. See [request conflict proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
 
@@ -332,7 +332,7 @@ Proposed error categories (names subject to interface review):
 | `TARGET_NOT_FOUND` | Exact edit target absent | No affected-operation mutation |
 | `AMBIGUOUS_MATCH` | Exact target occurs more than allowed | No affected-operation mutation |
 | `REVISION_CONFLICT` | Revision or patch intent cannot safely be reconciled | No silent replacement; ordinary per-member failure unless a request-level concurrent publication conflict is established |
-| `CONCURRENT_REQUEST_CONFLICT` (illustrative) | Concurrent local head change makes the **whole request's** staged intent unsafe to publish | Abort the request; no staged document change published; caller rereads/resubmits |
+| `CONCURRENT_REQUEST_CONFLICT` (illustrative) | Concurrent local head change makes the **whole request's** staged intent unsafe to publish | Abort the request; **no document change and no commit of any kind for the rejected request**; caller rereads/resubmits |
 | `PERMISSION_DENIED` | Operation outside authorized scope | No mutation |
 | `LOCAL_PERSISTENCE_FAILED` | Git commit/state durability cannot be confirmed | No reported success; state may need recovery |
 | `REMOTE_PUBLICATION_FAILED` | Central Git publication did not succeed | Local commit remains visible and pending; local success must not be rewritten as failure |
@@ -340,7 +340,7 @@ Proposed error categories (names subject to interface review):
 
 Each error should include project/path/operation identifiers where known and safe to disclose. The mapping to process exit codes, stderr, JSON output and later remote-tool errors remains to be designed. For a **request-level concurrency error**, report `document_changes_published: false` or equivalent; do not report provisional composite member successes as committed. A changed retry payload must use a new stable request ID when idempotency keys are in use. The exact error symbol and response fields above are illustrative, **not an approved CLI schema**.
 
-**Audit decision gate:** The scope of "no modification" above is the user document tree. Whether to record rejected concurrent attempts in **audit-only Git commits**, which themselves advance history, remains undecided and must be reconciled with the existing audit-of-attempts requirement before implementation. Never fabricate a committed success.
+**Owner-confirmed audit exception:** A request rejected at the local concurrency/publication boundary produces **no Git commit, including no audit-only commit**. The conflict response is returned to the caller, but it is not a durable shared-Git audit event. This explicitly narrows the previous blanket audit-of-attempts language; it does not silently drop the audit of failed individual members of a **published** composite. A failure/crash with **unknown publication outcome** must be investigated before returning a definitive conflict/no-commit result. Policy for completed nonconcurrency failures/no-ops remains open.
 
 Reject path traversal, unsafe absolute paths and unsupported symlink/path escapes where applicable. Do not overwrite documents on create or silently rewrite legacy markup.
 
@@ -353,7 +353,7 @@ The operation layer must be able to describe:
 3. **Git publication:** whether corresponding history is pending, published, blocked or uncertain.
 4. **Satellites (if configured):** their independent projection status, **without requiring a connector to run locally**.
 
-The 2026-11-06 exploratory audit direction favors compact versioned request/member records **inside Git commit messages**, avoiding one tracked audit file per request. The exact schema, audit-only commits for failed/no-op or rejected requests, retention, durability and remote replication policy are still review gates; do not present them as implemented. Local acceptance remains distinct from remote publication. Git history provides versioning but cannot substitute for these application-level records.
+The 2026-11-06 exploratory audit direction favors compact versioned request/member records **inside Git commit messages**, avoiding one tracked audit file per request. The owner has **excluded audit-only commits for concurrently rejected whole requests**. The exact schema, audit treatment for completed nonconcurrency failures/no-ops, retention, durability and remote replication policy remain review gates; do not present them as implemented. Local acceptance remains distinct from remote publication. Git history alone cannot substitute for application-level records within accepted commit messages.
 
 ## 11. Candidate acceptance examples
 
@@ -406,7 +406,7 @@ These are **specification-level acceptance scenarios**, not implemented test res
 5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
 6. `document.read` uses **1-based absolute file lines including frontmatter**, supports an **optional pinned local revision** across pages, and **reports incompleteness/continuation explicitly**.
 7. **2026-11-04:** project-scoped Markdown indexing and lexical, semantic and hybrid document search are **core** capabilities; structured metadata search is **deferred**, without changing YAML-frontmatter document operations. QMD is a candidate, not a selected dependency.
-8. **2026-11-06:** when a concurrent local publication conflict is not safely resolvable, the **whole request** is aborted without publishing its staged document changes. The coding agent rereads and resubmits revised edits. Ordinary per-member composite failures continue as previously selected; a remote-only push rejection cannot roll back locally acknowledged work.
+8. **2026-11-06:** when a concurrent local publication conflict is not safely resolvable, the **whole request** is aborted with **no commit, including no audit-only commit**. The coding agent rereads and resubmits revised edits. Ordinary per-member composite failures continue as previously selected; a remote-only push rejection cannot roll back locally acknowledged work.
 
 ### Review next
 
