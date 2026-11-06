@@ -2,11 +2,13 @@ package awl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -362,24 +364,70 @@ func findAudit(p project, head, id string) (audit, string, error) {
 	return found, foundSHA, nil
 }
 
+const (
+	localGitTimeout = 45 * time.Second
+	gitStdoutLimit = 32 << 20
+	gitStderrLimit = 1 << 20
+)
+
+// boundedOutput drains subprocess output while retaining at most limit bytes.
+// Always accepting complete writes avoids blocking a child that produced more
+// output than we can safely keep in memory.
+type boundedOutput struct {
+	bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (b *boundedOutput) Write(p []byte) (int, error) {
+	size := len(p)
+	available := b.limit - b.Len()
+	if available < len(p) {
+		b.overflow = true
+		if available < 0 {
+			available = 0
+		}
+		p = p[:available]
+	}
+	_, err := b.Buffer.Write(p)
+	return size, err
+}
+
+// git provides a bounded local default for existing callers. Future CLI
+// request cancellation can be propagated through gitContext explicitly.
 func git(dir string, env []string, input []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), localGitTimeout)
+	defer cancel()
+	return gitContext(ctx, dir, env, input, args...)
+}
+
+func gitContext(ctx context.Context, dir string, env []string, input []byte, args ...string) ([]byte, error) {
 	opts := []string{}
 	if dir != "" {
 		opts = append(opts, "--git-dir="+dir)
 	}
 	opts = append(opts, args...)
-	cmd := exec.Command("git", opts...)
+	cmd := exec.CommandContext(ctx, "git", opts...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = gitEnv(env)
 	if input != nil {
 		cmd.Stdin = bytes.NewReader(input)
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	b, e := cmd.Output()
-	if e != nil {
-		return nil, fmt.Errorf("git %q failed: %w: %s", args, e, strings.TrimSpace(stderr.String()))
+	stdout := &boundedOutput{limit: gitStdoutLimit}
+	stderr := &boundedOutput{limit: gitStderrLimit}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("git %q interrupted: %w", args, ctx.Err())
 	}
-	return b, nil
+	if stdout.overflow || stderr.overflow {
+		return nil, fail("GIT_OUTPUT_LIMIT", "Git command output exceeded the bounded capture limit")
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("git %q failed: %w: %s", args, runErr, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
 func gitEnv(extra []string) []string {
 	ret := []string{}
