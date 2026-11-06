@@ -513,3 +513,53 @@ func TestReadAndRemoteAddDoNotRequireWriterIdentity(t *testing.T) {
 		t.Fatalf("write without attribution succeeded: %d %s", code, out)
 	}
 }
+
+func TestGitRefLockFailureIsNotMisclassifiedAsConcurrentConflict(t *testing.T) {
+	c := fixture(t)
+	c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+
+	repos, err := filepath.Glob(filepath.Join(c.Data, "awl", "repos", "*"))
+	if err != nil || len(repos) != 1 {
+		t.Fatalf("find managed repository: %v, paths=%v", err, repos)
+	}
+	gitDir := repos[0]
+	before, err := headCommit(project{GitDir: gitDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(gitDir, "refs", "heads", "awl.lock")
+	// An existing Git ref lock makes update-ref fail without changing HEAD.
+	// This is an infrastructure failure, not a concurrent accepted request.
+	if err := os.WriteFile(lockPath, []byte("held by another Git process"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("# Retriable document\n")
+	code, output, stderr := c.call(content, "create", "Specs/retry.md", "--request-id", "ref-lock-01", "--json")
+	if code == 0 {
+		t.Fatalf("unexpected success with locked Git ref: %s, stderr=%s", output, stderr)
+	}
+	var response result
+	if err := json.Unmarshal(output, &response); err != nil {
+		t.Fatalf("expected structured failure: %s: %v", output, err)
+	}
+	if response.Error == nil || response.Error.Code != "GIT_PUBLICATION_FAILED" {
+		t.Fatalf("ref lock misclassified as a concurrent conflict: %+v; stderr=%s", response, stderr)
+	}
+	after, err := headCommit(project{GitDir: gitDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("a failed publication changed managed HEAD: before %s, after %s", before, after)
+	}
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	published := c.mustCall(t, content, "create", "Specs/retry.md", "--request-id", "ref-lock-01", "--json")
+	if published.Status != "applied" || published.Replayed || published.Commit == before {
+		t.Fatalf("retry should create one valid audited commit: %+v", published)
+	}
+	if got := c.read(t, "Specs/retry.md"); !bytes.Equal(got, content) {
+		t.Fatalf("retry corrupted Markdown: %q", got)
+	}
+}
