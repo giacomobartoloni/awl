@@ -182,3 +182,29 @@ Both modes assert **no successful CLI response** from the killed process. A test
 - Deterministic same-document CAS conflict and Git-ref-lock error classification remain covered by separate tests. Alternate remote authorities, Git remote sync, rsync, rclone and QMD are unchanged.
 
 **Status:** verified **process-kill fixture** in draft PR #7 only. The project remains a modular-monolith Go prototype, not a production-ready durable synchronization engine.
+
+
+## 10. Shift the test strategy toward awl's public CLI contract (2026-11-06)
+
+**User feedback:** the preceding increments overemphasized Git internals: `update-ref` wrappers, ref ancestry, commit counts and process-kill fault injection. Those tests validate a useful implementation safety boundary, but they are **not a sufficient definition of awl product correctness**. The first verification priority is what a human or coding agent can observe through awl commands.
+
+### Black-box product tests added
+
+Added `internal/awl/cli_contract_test.go`. These tests invoke the built **awl executable** using arguments/stdin and assert only its stdout/stderr, JSON/exit status and visible Markdown content via other awl commands. They deliberately do **not** inspect Git object IDs, ref history, commit messages or storage implementation details.
+
+| CLI contract test | User-visible behavior exercised |
+| --- | --- |
+| `TestCLIContractLocalOnlyProjectWorkflow` | Local-only `init --slug demo`; `create`; byte-exact `read` from a nested source directory; body-only `edit` preserving YAML and CRLF; later `remote add`; idempotent second `remote add`; unchanged local content |
+| `TestCLIContractCompositePartialResultAndIdempotentRetry` | `apply` with one ordinary duplicate-path failure and one successful create; stable ordered member outcomes, partial exit classification, preservation of existing content, and same-request-ID replay without duplicated effects |
+| `TestCLIContractProjectAndInputErrorsAreObservable` | Unsafe/unsupported paths rejected with structured errors; mismatching `--project` rejected from the current repository context; no resulting document created |
+
+The corresponding standalone CI stage `CLI user-contract tests` runs `go test -race -count=2 -run TestCLIContract ./internal/awl` in addition to the full suite.
+
+### Testing layers going forward
+
+1. **Primary — product contract (black-box CLI):** command usability, stdin/stdout and JSON envelopes, predictable exit classifications, project/worktree context, byte-preserving document operations, partial composite outcomes, idempotency and recovery. Assertions should avoid Git-specific internals whenever the promised behavior can be observed through awl.
+2. **Secondary — application behavior:** focused unit tests for document intent validation, frontmatter protection, ordered operation results and error classification; prefer table-driven Go tests where appropriate.
+3. **Supporting — Git implementation integration:** Git ref CAS, audit integrity, subprocess bounds and fault injection. These prove how the initial Git-backed implementation satisfies the public contract, but must not redefine that contract or preclude a future backend.
+4. **Later — actual new features:** `metadata.*`, history, partial reads, remote `sync`, `status`, search/index, and provider export must receive their own **user-facing acceptance tests when implemented**. They are **not already tested or implemented** merely because local Git plumbing passes.
+
+**Limits:** the new tests still depend on a temporary source Git repository as a project-initialization fixture, which is expected for the present scope. They exercise the CLI on Linux; they are not proof of release-quality exit-code stability, generic metadata support, cross-platform behavior, remote synchronization or provider neutrality. They do not replace targeted corruption/crash tests, just put product behavior first.
