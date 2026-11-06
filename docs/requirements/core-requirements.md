@@ -1,1 +1,191 @@
-PLACEHOLDER
+# AgentWorklog CLI — Core Requirements (Proposed Revision)
+
+**Status:** draft; review required; owner-selected Git hub-and-spoke topology.  
+**Date:** 2026-10-23.  
+**Product:** AgentWorklog CLI (awl), distinct from the existing AgentWorklog Markdown conventions.  
+**Provenance:** Consolidates the working vault draft at AgentWorklog/awl/Specs/2026-10-23-core-requirements-spec.md and the follow-up product discussion. This is a proposed replacement baseline, not an approved specification and not an implemented feature.
+
+## 1. Purpose
+
+Provide a project-oriented, offline-first interface for reading, editing, indexing, and searching Markdown documents, while preserving generic YAML-frontmatter document operations. AgentWorklog clients use awl's controlled API rather than directly editing the managed local replica. Changes can be made while offline and published to one authoritative Git remote per project. Optional satellite integrations (starting with Google Drive as a candidate) connect to that remote Git hub. Satellite synchronization direction and mechanics remain open.
+
+## 2. Agreed product boundaries
+
+- A project is identified by a slug. The slug need not equal a repository or folder name.
+- Each project uses managed local Git and one authoritative **remote Git repository** as its shared history. One or more optional secondary integrations, including Google Drive as an initial candidate, connect to the remote Git hub. These are not co-equal authoritative backends.
+- A durable, locally managed **Git-based document replica** supports offline reads and changes; Git publication is asynchronous with respect to a local change. Optional satellite projections can lag independently.
+- Clients access documents through awl. Direct filesystem mutation of its managed local state is not a supported editing interface. This is an API and audit boundary, not a claim of OS-level tamper resistance.
+- Markdown files remain portable, with YAML frontmatter as the metadata serialization. New AgentWorklog conventions target Open Knowledge Format (OKF) v0.2; legacy files are user-owned and must not be silently migrated.
+- OKF lifecycle status (draft, stable, deprecated) is distinct from the AgentWorklog extension workflow-status. No implicit mapping.
+- Standard Markdown links are preferred for new links. Existing Obsidian links require a separately authorized migration.
+- Document types and custom metadata keys have no fixed domain semantics in the CLI core. No Activity, Spec, Plan, or ProductPlan lifecycle commands are required.
+- Single requests and composites may include multiple document and metadata operations. Composites run operations in order, **continue after member errors**, and report every outcome. **One local Git content commit per request with successful modifications** records the resulting changes; no multi-request/distributed rollback requirement is implied.
+- Every applied change is associated with an auditable request/operation identity. Git commits may provide version history but do not by themselves capture attempted/failed operations or prove caller identity. Shared or tamper-resistant audit remains open.
+- Project-scoped document indexing and lexical/full-text, semantic, and hybrid retrieval are **core capabilities**. Structured YAML metadata indexing/query/filtering, shared _research/_guides handling, a mandatory server, and a required synchronization daemon are not in the initial scope. No search engine or dependency has been selected.
+
+### Source repository and awl configuration (owner-confirmed 2026-11-04)
+
+- A source-code repository is an optional context for an awl project; the source repository and awl's managed worklog Git repository are distinct. Nothing here requires all awl projects to be Git source repositories.
+- When a source repository is used, `.awl/project.yaml` is its shared, version-controllable awl project configuration; `.awl/local.yaml` is its personal, Git-ignored configuration entry point.
+- All linked Git worktrees of the same source repository must resolve one shared effective **local awl configuration** and one managed local awl Git repository on the same machine. No per-worktree awl repository or file-replication service is required.
+- The authoritative personal configuration is stored once under the **source Git common directory**. `.awl/local.yaml` may expose that single file through an optional symlink; awl must work without the symlink. A separate ordinary local.yaml in a worktree must not silently override the common file.
+- Managed local worklog Git repositories live by default under the user's application-data directory, with an explicit personal storage-path override. A project slug alone must not silently conflate distinct project histories.
+- Git's effective user identity is the default when operating in a source repository; awl may explicitly override it in local configuration. awl must not modify Git user configuration. Git commit attribution, identity provenance, and the effect of worktree-specific Git identity settings still need a precise contract.
+- The `.awl/local.yaml` convention must be excluded from source Git tracking. Project configuration must not carry machine-specific paths, personal identities, or secrets by default. No background configuration synchronization, watcher, account system, or extra registry is required by this decision.
+- Differences between branch-specific `.awl/project.yaml` versions must not silently redirect an operation to an incompatible awl project or managed repository.
+
+These are owner-confirmed product/configuration boundaries, not claims of implemented behavior. Exact YAML schema, config CLI, platform paths, initialization, link handling, and conflict/error representations remain design work.
+
+## 3. Terminology
+
+- **Project:** Slug-addressed context with a private local Git replica, one authoritative remote Git repository and optional satellite integrations.
+- **Document:** A Markdown resource addressed by project slug and project-relative path.
+- **Document metadata:** Arbitrary YAML-frontmatter values, independent of backend metadata.
+- **Local revision:** A reference to the locally committed Git state associated with a document; exact reference/branch conventions remain TBD.
+- **Authoritative Git revision:** A Git commit/ref state accepted by the project's central Git remote, distinct from locally committed history.
+- **Operation:** An individual document or metadata action.
+- **Composite:** An ordered collection of operations in one request, possibly spanning multiple documents.
+- **Audit record:** A record of request intent, actor information supplied or authenticated, per-operation results, and resulting revisions.
+- **Sync state:** Observable status distinguishing local application, publication to the Git hub, and propagation to each configured satellite; exact state names TBD.
+
+## 4. Functional requirements
+
+Priority is indicative: Core means candidate first increment, Later means explicitly deferred. No release plan is implied.
+
+| ID | Priority | Requirement |
+| --- | --- | --- |
+| FR-01 | Core | Discover locally configured accessible projects and resolve a project by its slug; reject ambiguous resolution. |
+| FR-02 | Core | Associate each project with a managed local Git replica and one authoritative Git remote; allow optional additional satellite integrations connected to the Git remote, not direct peer-to-peer remote replicas. |
+| FR-03 | Core | Retain a locally durable, managed Git replica for a project and support reads and writes to already available local documents when disconnected. |
+| FR-04 | Core | Offer project-scoped listing, full and bounded document reads, creation and modification through awl without direct access to managed replica files. **Approved read behavior:** 1-based absolute physical-file line coordinates including frontmatter, optional pinned local Git revision across pages, and explicit truncation/continuation. Quantitative limits and public syntax remain open. |
+| FR-05 | Core | Support generic, typed YAML-frontmatter reads and mutations using **RFC 6901 JSON Pointer** for single-node addressing. Distinguish replacement, insertion at a list index, append, and removal; preserve unknown keys and unaffected content and reject unverifiable stale positional list edits. |
+| FR-06 | Core | Support LLM-agent-friendly **body-only** Markdown editing, including exact targeted replacement with explicit ambiguity/failure results; an obsolete read revision need not force a new read if the target remains uniquely and safely applicable. The final patch syntax is not yet selected. |
+| FR-07 | Core | Accept several ordered edits within a single document-modification request and provide a clear document-level result. |
+| FR-08 | Core | Support ordered composites that **continue after individual operation failures**, reporting every outcome and a request-level correlation identifier. Commit successfully applied changes once per request when content changes. |
+| FR-09 | Core | Preserve locally accepted modifications in managed Git durably across restarts; do not silently discard changes awaiting publication to the authoritative Git remote. |
+| FR-10 | Core | Record an auditable history of **published local requests** and their ordered operation outcomes, including actor information as available; do not infer partial member failures or authenticated identity from Git diffs. **Owner-confirmed exception (2026-11-06):** a whole request rejected for an unsafe concurrent local conflict produces **no Git commit, including no audit-only commit**; its conflict result is returned to the caller but is not durably present in shared Git audit. The broader audit policy for completed no-change/nonconcurrency failures remains open. |
+| FR-11 | Core | Support exchange of local Git commits and shared history with the project's authoritative Git remote, distinguishing locally committed changes from remotely accepted changes. Satellite synchronization behavior is separately scoped. |
+| FR-12 | Core | Expose local commit, Git hub publication, and per-satellite propagation status where applicable; errors, unresolved changes and conflicts must be visible without silent overwrites. |
+| FR-13 | Core | Retain existing file contents and links unless an explicit modification succeeds. Never silently normalize, rewrite, move, overwrite, or delete user-owned Markdown. |
+| FR-14 | Core | Produce explicit per-operation error outcomes for nonexistent or ambiguous targets, malformed YAML, unavailable permissions, unsupported actions, and modifications that cannot be reconciled safely. |
+| FR-15 | Core | Constrain access to configured project scope and provider authorization; do not expose provider credentials or unrestricted local storage access. |
+| FR-16 | Core | Support nonsemantic operations on arbitrary document types and frontmatter fields; neither OKF nor worklog-specific fields are interpreted as mandatory workflow rules. |
+| FR-17 | Core | Make failure/restart recovery observable; global cross-document atomicity, distributed rollback, and ACID transactions are not required. |
+| FR-18 | Later | Offer a remote-agent/MCP interface using the same application operations, without defining the wire protocol now. |
+| FR-19 | Core | Build and maintain a searchable, project-scoped index of managed Markdown documents as **derived state**, without mutating original content or replacing Git as document authority. Support recovery/rebuild of derived index state. |
+| FR-20 | Later | Support additional backend integrations as satellites of the authoritative remote Git hub, beginning with a Google Drive projection candidate; whether they support external-to-Git ingestion remains open. |
+| FR-21 | Core | Expose project-scoped **lexical/full-text, semantic, and hybrid document retrieval** with grounded document identities and useful excerpts. Mode-specific model provisioning, ranking, limits and public syntax require design and validation. |
+| FR-22 | Core | Make index availability and freshness relative to managed local document revisions observable, including pending, stale, failed, or rebuild-required states; never misrepresent old index hits as current Git content. |
+| FR-23 | Later | Structured frontmatter metadata indexing, filtering, discovery, and queries; optional OKF/project validation and structural Markdown editing. Generic YAML metadata **document operations** remain in scope via FR-05. |
+| FR-24 | Core | In a source Git repository, support version-controllable `.awl/project.yaml` and a Git-ignored `.awl/local.yaml` entry point, resolving one authoritative personal configuration via the source repository's Git common directory for all linked worktrees. No replication or mandatory symlink. |
+| FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
+| FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
+| FR-27 | Core | **Owner-confirmed 2026-11-06:** If concurrent modifications make final local publication unsafe, reject the **whole** submitted request without publishing **any** of its staged document changes **or any commit for that rejected request**, including audit-only commits; report a machine-readable conflict so the coding agent can reread and resubmit updated intent. Internal revision checks and safe retries belong to awl; the caller need not send a document revision. Ordinary composite member failures still continue under FR-08. A later Git remote push conflict does not undo a request already locally acknowledged. |
+
+## 5. Non-functional requirements
+
+| ID | Requirement |
+| --- | --- |
+| NFR-01 — Data integrity | A confirmed local change must be durable and recoverable; unexpected partial results, ambiguous states, and failed synchronizations must be explicit. |
+| NFR-02 — Portability | Content remains standard UTF-8 Markdown and YAML frontmatter without mandatory Obsidian plugins or proprietary document formats. |
+| NFR-03 — Offline usability | Already synchronized material is available and editable offline without hidden online preconditions. |
+| NFR-04 — Auditability | Correlate caller intent, operations, outcomes, revisions and eventual sync results; describe limitations of claimed actor identity or tamper resistance. |
+| NFR-05 — Extensibility | Document metadata operations are independent of storage. The authoritative Git transport and optional satellite connector capabilities are separated and never advertised as interchangeable. |
+| NFR-06 — Security | Treat paths, document content, config, and provider input as untrusted; avoid path escapes, credential exposure and unauthorized operations. |
+| NFR-07 — Testability | Verify operations, offline recovery, audit and synchronization against representative Markdown samples and backend capabilities. |
+| NFR-08 — Usability | CLI outputs should be predictable for humans and agents; composite responses should be machine-readable. |
+| NFR-09 — Performance | Avoid redundant downloads and unnecessary content transfer; set quantitative targets after a representative prototype. |
+| NFR-10 — Search safety | Indexes are disposable derived data; indexing and querying must not rewrite Markdown or leak files outside authorized project scope. |
+| NFR-11 — Search resilience | Offline lexical retrieval must be possible on initialized local state; semantic/hybrid model setup, offline behavior, degradation and resource budgets need explicit contracts and measurement. |
+
+## 6. Acceptance scenarios to refine
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-01 | Configure two slugged projects with different authoritative remote Git repositories. | Each project resolves to its own local managed Git state and corresponding Git hub without conflating histories. |
+| AC-02 | Disconnect after initial synchronization and read a known document. | Its local Git version remains readable; Git hub publication/freshness limits are exposed. |
+| AC-03 | Modify a known document while offline; restart awl before reconnecting. | Change and its audit record survive; synchronization remains pending. |
+| AC-04 | Send multiple body-only edits for one document, including a stale-base edit with a safe exact unique match. | The resulting document retains frontmatter unchanged; safe edits can apply without forced reread, and ambiguous/unsafe ones return explicit errors. |
+| AC-05 | Run a composite across several documents and cause its middle operation to fail. | Later operations still execute; all operation results are reported; one local Git commit contains the successful changes, if any. |
+| AC-06 | Exchange commits after offline changes and new authoritative Git commits. | The shared Git history is reconciled or an explicit conflict is returned; no silent overwrite. Detailed rules remain open. |
+| AC-07 | Edit nested YAML metadata through JSON Pointer, including objects and nested lists, without changing the body. | Pointer escaping and zero-based indexes resolve precisely; replacement never inserts; array insert/append/remove and unsafe stale-position conflicts are explicitly handled without rewriting unrelated content. |
+| AC-08 | Read legacy AgentWorklog Markdown with wikilinks and old status conventions. | Reads do not trigger implicit migration or normalization. |
+| AC-09 | Access audit and sync status for a composite. | Caller can distinguish local Git commit, authoritative Git publication, and optional satellite propagation. |
+| AC-10 | Attempt direct modification outside project scope. | Operation is rejected, and authorization boundaries are enforced where technically possible. |
+| AC-11 | Configure a Google Drive satellite for a Git-backed project and project an accepted Git revision. | The integration reports its own projection progress and failures without changing the authoritative Git revision; reverse ingestion is not presumed. |
+
+Owner-confirmed partial-read acceptance direction: AC-12 — 1-based full-file lines include frontmatter; AC-13 — an optional pinned local revision stays stable across pages; AC-14 — explicit incomplete/truncated result with continuation information on a size limit. Exact limits, public fields and long-line fallback remain to be designed.
+
+New search acceptance candidates (2026-11-04; **not executed**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-15 | Search documents in a locally initialized project with an exact phrase and a conceptual paraphrase. | Lexical and semantic/hybrid modes are addressable and return grounded project-relative document references. |
+| AC-16 | Modify a document through awl while an index already exists. | Results and index status distinguish current content from pending/stale indexing and support repair/rebuild. |
+| AC-17 | Search offline after initial local index/model setup. | Supported modes work without unannounced remote access; unavailable semantic models are reported explicitly. |
+| AC-18 | Attempt a query that filters by arbitrary YAML-frontmatter fields. | Structured metadata filtering is clearly unsupported in the initial search contract, never silently ignored. |
+| AC-19 | Index legacy Markdown with YAML frontmatter and existing Obsidian links. | Source documents are not rewritten, normalized, or migrated by indexing. |
+
+Configuration acceptance candidates (2026-11-04; **not implemented or tested in awl**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-20 | Invoke awl from a main worktree and a linked worktree of one source repository. | Both resolve the same authoritative personal awl config and managed local worklog Git repository, independently of their working-tree paths. |
+| AC-21 | Use `.awl/local.yaml` with a symlink in one worktree and without a symlink in another. | Both use the common-directory configuration; no copy or background synchronization is required. |
+| AC-22 | Git provides a user name/email, then awl-local identity overrides them. | Git identity is used by default; configured overrides take precedence without changing Git config; missing identity is reported when required for a commit. |
+| AC-23 | A branch's `.awl/project.yaml` changes the awl project identity or repository target incompatibly. | awl signals the mismatch before writing; it does not silently redirect or merge unrelated histories. |
+| AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
+
+Request-level concurrency acceptance candidates (2026-11-06; owner-confirmed behavior, **not implemented or tested**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-25 | A composite stages changes to A and C, but another process changes its target in B incompatibly before local publication. | Reject the entire request; no staged document changes to A, B or C become visible; the managed Git head does **not** advance due to that request, including for audit; return conflict context for agent reread/resubmit. |
+| AC-26 | A composite contains an ordinary invalid member, with other valid members and no concurrent publication conflict. | Continue in order; record all member outcomes and commit the successful changes once. |
+| AC-27 | Two requests started on the same head change unrelated documents; one publishes first. | The other may safely revalidate/rebuild and publish, or return a truthful retryable conflict; never silently clobber an acknowledged change. |
+| AC-28 | A request is already committed locally, but synchronization encounters remote Git divergence. | Retain the local commit and audit; report remote pending/conflicted separately, without claiming the local request was aborted. |
+
+The owner has confirmed **no commit whatsoever for a locally rejected concurrent request**, including audit-only commits; this consciously narrows durable shared-audit coverage relative to the earlier all-attempts wording. The exact response schema, handling of ordinary failed/no-op (nonconcurrency) requests, staging mechanism and test limits remain open. See [request-level conflict design proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
+
+## 7. Architectural evaluation and open requirements
+
+See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), [QMD search/indexing assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md), [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), and [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
+
+**Owner-selected architectural direction, not an implemented or merged design:**
+- One authoritative Git remote per project, with optional secondary integrations connected in a hub-and-spoke topology.
+- Offline-first managed local Git replica.
+- Controlled API, generic metadata document operations, auditable operations and composites.
+- Indexing, lexical/full-text retrieval, semantic retrieval, and hybrid retrieval as core document capabilities; QMD is an **evaluation candidate**, not a selected implementation.
+- Google Drive is a candidate secondary satellite integration, not an alternative authoritative remote.
+
+**Open, explicitly deferred:**
+- Direction of satellite synchronization: initial export-only projection versus optional import of externally authored changes into Git; execution location for satellite workers.
+- Local Git persistence implementation: command-line Git versus library, private object/worktree model, commit granularity, retention, and possible additional audit journal.
+- Git remote publication and scheduling, initial clone/bootstrap, partial history, and separate satellite projection semantics and freshness.
+- Exact safe-retry criteria and Git ref-conflict implementation; **owner-selected** fatal request-level concurrency conflict behavior is now recorded in FR-27 and AC-25–AC-28. Remote merge policy, external writer behavior, simultaneous creates and uncertain remote writes remain open.
+- Whether full application audit history must be synchronized through Git and independently verifiable across users.
+- Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
+- Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, and whether context, three-way merge or line/hash anchors are used. Read coordinate/revision behavior is selected; quantitative bounds and error edge cases are still open.
+- Slug grammar/global namespace; project configuration distribution; remote Git repository/ref mapping and optional satellite destination mapping.
+- Credentials, security model, actor identity, sharing, and key lifecycle.
+- Git remote provider requirements and separate capabilities, deployment needs, and limitations of satellite integrations.
+- Public names/schema for JSON Pointer-based metadata operations, indexed-list preconditions and YAML formatting/alias preservation; read response serialization and quantitative bounds (the read coordinate model is approved); whether the CLI is initially the only interface.
+- Local snapshot lifecycle, retention, garbage collection, portability and backup.
+- Search-result contract, text scope (body only versus frontmatter as plain text), index revision/freshness representation, refresh triggers, ranking, model bootstrap, offline failures, and cross-project scope.
+- Search engine choice and integration boundary. No QMD, model runtime, database schema or mandatory daemon is approved; structured metadata search stays deferred.
+
+## 8. Compatibility and migration
+
+Current AgentWorklog documents remain user-owned. The existing vault convention and structure are compatibility inputs rather than an already approved CLI schema. Migration of legacy frontmatter, wikilinks or directory layouts must be separately scoped and authorized. No backend migration or file rewriting is implied by this proposal.
+
+## 9. Evidence and status
+
+- Current implementation status: no awl CLI implementation; the GitHub default branch contained LICENSE only at inspection time (2026-10-23).
+- Existing working requirements draft: AgentWorklog/awl/Specs/2026-10-23-core-requirements-spec.md in the connected Google Drive vault.
+- Format reference: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md (OKF v0.2).
+- Repository-local durable requirements are **proposed in this draft PR**, not merged or implemented.
+- **Owner-confirmed scope (2026-11-04):** indexing and lexical/semantic/hybrid search are core; structured metadata search and filtering are deferred; QMD is being assessed, not selected.
+
+## 10. Next review gate
+
+Review this revised contract for managed local Git, one authoritative remote Git hub per project, and optional satellite integrations. Validate a minimal search/indexing contract and evaluate a pinned QMD build on representative Markdown without metadata filters; then scope focused experiments for Git publication, audit persistence, satellite projections and editing safety before selecting implementation libraries or deployment tooling.
