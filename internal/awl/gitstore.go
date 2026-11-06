@@ -366,8 +366,8 @@ func findAudit(p project, head, id string) (audit, string, error) {
 
 const (
 	localGitTimeout = 45 * time.Second
-	gitStdoutLimit = 32 << 20
-	gitStderrLimit = 1 << 20
+	gitStdoutLimit  = 32 << 20
+	gitStderrLimit  = 1 << 20
 )
 
 // boundedOutput drains subprocess output while retaining at most limit bytes.
