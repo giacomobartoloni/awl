@@ -267,7 +267,7 @@ A composite is **one request containing ordered, heterogeneous operations**; it 
 
 **Owner-selected execution policy: continue after each operation failure.** Every operation is attempted in declared order unless a request-level fatal error prevents further execution. Later operations observe successfully staged earlier changes, even when an intermediate operation fails. A failed operation contributes **no** partial modification of its own.
 
-**Owner-selected commit granularity: one local Git content commit per request.** If at least one operation produces a valid content change, all successful staged changes are represented by **one** local Git commit after processing the request. If all operations fail or produce no changes, no empty content commit is required; the outcomes still need auditable representation.
+**Owner-selected commit granularity (updated 2026-11-06): one audited Git commit per locally completed mutating request.** If at least one operation produces a valid content change, all successful staged changes and ordered operation outcomes are represented by **one content-changing Git commit**. If all members fail ordinarily or the completed request makes no document change, publish **one audit-only Git commit with the same document tree**. This audit-only commit is not a content-changing commit. The distinct fatal concurrent-publication rejection produces **no commit of any kind** and is not a completed/published request.
 
 This is not an ACID transaction mechanism and does not require rollback across separately accepted requests. If final Git persistence fails, **none** of the staged operations may be reported as durably `applied`; a failure/uncertain outcome must be returned with recoverable diagnostics. The handling of interruption and retry IDs remains open.
 
@@ -340,7 +340,7 @@ Proposed error categories (names subject to interface review):
 
 Each error should include project/path/operation identifiers where known and safe to disclose. The mapping to process exit codes, stderr, JSON output and later remote-tool errors remains to be designed. For a **request-level concurrency error**, report `document_changes_published: false` or equivalent; do not report provisional composite member successes as committed. A changed retry payload must use a new stable request ID when idempotency keys are in use. The exact error symbol and response fields above are illustrative, **not an approved CLI schema**.
 
-**Owner-confirmed audit exception:** A request rejected at the local concurrency/publication boundary produces **no Git commit, including no audit-only commit**. The conflict response is returned to the caller, but it is not a durable shared-Git audit event. This explicitly narrows the previous blanket audit-of-attempts language; it does not silently drop the audit of failed individual members of a **published** composite. A failure/crash with **unknown publication outcome** must be investigated before returning a definitive conflict/no-commit result. Policy for completed nonconcurrency failures/no-ops remains open.
+**Owner-confirmed audit scope (2026-11-06):** A locally **completed mutating request** receives one durable shared-Git audit-bearing commit even if all operations fail ordinarily or make no change; use an **audit-only commit** in those cases. A request rejected at the local concurrency/publication boundary produces **no commit at all**, and its error response is not durably recorded in shared Git history. An invalid request rejected **before execution begins** also produces no commit under the initial proposed boundary. Failed members of a published composite are included in the same complete audit record. A failure/crash with **unknown publication outcome** must be investigated before returning a definitive conflict/no-commit result. Exact request admission rules, schema and recovery semantics remain to design.
 
 Reject path traversal, unsafe absolute paths and unsupported symlink/path escapes where applicable. Do not overwrite documents on create or silently rewrite legacy markup.
 
@@ -353,7 +353,7 @@ The operation layer must be able to describe:
 3. **Git publication:** whether corresponding history is pending, published, blocked or uncertain.
 4. **Satellites (if configured):** their independent projection status, **without requiring a connector to run locally**.
 
-The 2026-11-06 exploratory audit direction favors compact versioned request/member records **inside Git commit messages**, avoiding one tracked audit file per request. The owner has **excluded audit-only commits for concurrently rejected whole requests**. The exact schema, audit treatment for completed nonconcurrency failures/no-ops, retention, durability and remote replication policy remain review gates; do not present them as implemented. Local acceptance remains distinct from remote publication. Git history alone cannot substitute for application-level records within accepted commit messages.
+The owner selected compact, versioned **operation-level audit inside Git commit messages**, avoiding tracked audit files per request. **One audit-only commit is required for completed no-op/all-failed mutating requests**, while a **whole request rejected for a concurrent publication conflict creates none**. Exact schema, request admission, retention, Git durability and remote replication need design and tests; no implementation is claimed. Local acceptance remains separate from remote publication.
 
 ## 11. Candidate acceptance examples
 
@@ -407,14 +407,16 @@ These are **specification-level acceptance scenarios**, not implemented test res
 6. `document.read` uses **1-based absolute file lines including frontmatter**, supports an **optional pinned local revision** across pages, and **reports incompleteness/continuation explicitly**.
 7. **2026-11-04:** project-scoped Markdown indexing and lexical, semantic and hybrid document search are **core** capabilities; structured metadata search is **deferred**, without changing YAML-frontmatter document operations. QMD is a candidate, not a selected dependency.
 8. **2026-11-06:** when a concurrent local publication conflict is not safely resolvable, the **whole request** is aborted with **no commit, including no audit-only commit**. The coding agent rereads and resubmits revised edits. Ordinary per-member composite failures continue as previously selected; a remote-only push rejection cannot roll back locally acknowledged work.
+9. **2026-11-06:** choose **Go** for the initial CLI implementation with **external Git CLI** commands (not an embedded Git library), retaining structured, shell-free invocation. Concrete syntax, packaging, supported platforms and Git version gates require verification.
+10. **2026-11-06:** every **completed mutating request**, including ordinary all-failed/no-op requests, is published with **one audit-bearing commit**; use an **audit-only commit** if the user document tree is unchanged. This does not alter decision 8's no-commit concurrent conflict exception.
 
 ### Review next
 
 1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
 2. **Partial reads:** the owner accepted the **1-based absolute-file coordinate system (including frontmatter)**, optional revision-pinned continuation and explicit truncation/continuation semantics. [Comparative research](../research/2026-10-23-partial-read-agent-conventions.md). Numerical limits, public command/wire syntax and long-line fallback remain open.
 3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
-4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
-5. **Composite implementation:** the **fatal request-level concurrency boundary is now owner-confirmed**; its detection/revalidation algorithm, interrupted-commit handling, idempotent retries, and final outcome reporting remain to design and verify.
+4. **Audit:** durable **audit-only commits** for completed all-failed/no-op mutating requests are now owner-selected. Define full message schema, request admission, expected-old-ref publication, idempotent recovery, retention and scalable lookup; do not redefine the concurrent rejection exception.
+5. **Composite implementation:** the **fatal request-level concurrency boundary and audit-only completed-request behavior are owner-confirmed**; their detection/revalidation algorithm, interrupted-commit handling, idempotent retries, and final outcome reporting remain to design and verify.
 6. **Search/indexing:** define result identity and ranking, query modes, indexing/refresh lifecycle, revision freshness and offline-model failure behavior. Decide whether frontmatter is indexed as ordinary text or excluded, and evaluate [QMD](../research/2026-11-04-qmd-search-and-indexing-assessment.md) without assuming metadata filters or a specific runtime.
 
 ### Explicitly defer
