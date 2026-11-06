@@ -65,6 +65,9 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 		target   func(testCLI, string) (string, error)
 		wantCode string
 	}{
+		{"empty", func(c testCLI, root string) (string, error) {
+			return "", nil
+		}, "INVALID_REPO_DIR"},
 		{"relative", func(c testCLI, root string) (string, error) {
 			return "relative/demo.git", nil
 		}, "INVALID_REPO_DIR"},
@@ -87,6 +90,13 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 		{"existing file", func(c testCLI, root string) (string, error) {
 			dest := filepath.Join(root, "file.git")
 			return dest, os.WriteFile(dest, []byte("Keep me"), 0600)
+		}, "REPO_DIR_EXISTS"},
+		{"symlink target", func(c testCLI, root string) (string, error) {
+			dest := filepath.Join(root, "link.git")
+			if err := os.Symlink(root, dest); err != nil {
+				return "", err
+			}
+			return dest, nil
 		}, "REPO_DIR_EXISTS"},
 		{"symlink parent", func(c testCLI, root string) (string, error) {
 			link := filepath.Join(root, "shortcut")
