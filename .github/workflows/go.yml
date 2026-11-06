@@ -27,4 +27,4 @@ jobs:
       - name: Integration tests with race detector
         run: go test -race -count=1 ./...
       - name: Repeat deterministic same-target conflict test
-        run: go test -race -count=8 -run '^TestConcurrentIncompatibleCompositeAbortsWithoutCommit ./internal/awl
+        run: go test -race -count=8 -run TestConcurrentIncompatibleCompositeAbortsWithoutCommit ./internal/awl
