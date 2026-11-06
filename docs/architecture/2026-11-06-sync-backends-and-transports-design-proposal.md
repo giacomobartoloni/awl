@@ -1,6 +1,6 @@
 # Sync Engines, Backends, and Transports — Capability-Based Design Proposal
 
-**Status:** architecture proposal for review; **not approved, implemented, tested, or an ADR**.  
+**Status:** synchronization and provider design proposal for review; **not approved, implemented, or tested**. The **modular monolith** architectural style is separately owner-approved in [ADR 0001](../adr/0001-modular-monolith.md); this does **not** approve the sync/provider design.  
 **Date:** 2026-11-06.  
 **Product:** AgentWorklog CLI (`awl`), not the existing AgentWorklog Markdown conventions.  
 **Goal:** accommodate Git, rsync, rclone and potential provider-backed synchronization without prematurely turning the Go CLI into an interchangeable storage-engine/plugin framework.
@@ -12,6 +12,8 @@
 **Exploratory alternative, not an approved revision:** [PR #3](https://github.com/giacomobartoloni/awl/pull/3) and the prior [sync-strategy worklog](https://drive.google.com/file/d/1G5EmfT98MJtpoVkKZvmrb0FrUqYYoBIo/view) investigate **provider-neutral authoritative synchronization**, per-file Base/Local/Remote (B/L/R) checkpoints, rsync, rclone, Google Drive and Automerge. They do not supersede the Git-hub decision. Different project backends and different transport executables are **not the same dimension**.
 
 **Owner-approved local-only initialization (2026-11-06):** a project can be created with no remote; later `awl remote add <url>` assigns a Git remote **as configuration only**, without contacting it. Replacement/migration remains a separate decision. The command spelling is currently an experimental CLI example, not an approved permanent API. A project without a remote has local history; its remote publication status is `not_configured`, not `published`.
+
+**Packaging decision (owner-approved 2026-11-06):** awl uses a **modular monolith**, documented in [ADR 0001](../adr/0001-modular-monolith.md). Logical roles below do **not** mandate one Go package per role, a full hexagonal framework, dependency injection container or speculative adapter interfaces. The proposal to support multiple transport/backend modes remains separately subject to capability verification and review.
 
 The aim here is to **prepare clean extension seams** while implementing only those modes with demonstrated semantics. Do not introduce a public Go plugin API, runtime registry, dependency injection container, interface per provider, or YAML strategy key just to satisfy a speculative extension requirement.
 
