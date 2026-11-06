@@ -69,13 +69,13 @@ type entry struct {
 	Exists bool
 }
 type cli struct {
-	jsonOut  bool
+	jsonOut       bool
 	errorJSONSeen bool
-	errorJSON bool
-	stdout   io.Writer
-	stderr   io.Writer
-	stdin    io.Reader
-	explicit string
+	errorJSON     bool
+	stdout        io.Writer
+	stderr        io.Writer
+	stdin         io.Reader
+	explicit      string
 }
 
 type domainError struct{ code, msg string }
