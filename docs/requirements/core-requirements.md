@@ -80,6 +80,7 @@ Priority is indicative: Core means candidate first increment, Later means explic
 | FR-24 | Core | In a source Git repository, support version-controllable `.awl/project.yaml` and a Git-ignored `.awl/local.yaml` entry point, resolving one authoritative personal configuration via the source repository's Git common directory for all linked worktrees. No replication or mandatory symlink. |
 | FR-25 | Core | All worktrees of a source repository resolve one managed local awl Git repository in user-level application data unless explicitly overridden. Reject ambiguous project identity or unsafe storage redirection rather than silently combining histories. |
 | FR-26 | Core | Use the effective Git user identity by default, with explicit awl-local overrides and no mutation of Git configuration. Preserve actor provenance without treating Git author fields as authenticated identity. |
+| FR-27 | Core | **Owner-confirmed 2026-11-06:** If concurrent modifications make final local publication unsafe, reject the **whole** submitted request without publishing **any** of its staged document changes; report a machine-readable conflict so the coding agent can reread and resubmit updated intent. Internal revision checks and safe retries belong to awl; the caller need not send a document revision. Ordinary composite member failures still continue under FR-08. A later Git remote push conflict does not undo a request already locally acknowledged. |
 
 ## 5. Non-functional requirements
 
@@ -135,6 +136,17 @@ Configuration acceptance candidates (2026-11-04; **not implemented or tested in 
 | AC-23 | A branch's `.awl/project.yaml` changes the awl project identity or repository target incompatibly. | awl signals the mismatch before writing; it does not silently redirect or merge unrelated histories. |
 | AC-24 | Two concurrent awl processes use different worktrees of the same source repository. | Managed local repository operations preserve integrity and report incompatible concurrent changes; no duplicate per-worktree awl repository is created. |
 
+Request-level concurrency acceptance candidates (2026-11-06; owner-confirmed behavior, **not implemented or tested**):
+
+| ID | Scenario | Expected observable behavior |
+| --- | --- | --- |
+| AC-25 | A composite stages changes to A and C, but another process changes its target in B incompatibly before local publication. | Reject the entire request; no staged document changes to A, B or C become visible; return conflict context for agent reread/resubmit. |
+| AC-26 | A composite contains an ordinary invalid member, with other valid members and no concurrent publication conflict. | Continue in order; record all member outcomes and commit the successful changes once. |
+| AC-27 | Two requests started on the same head change unrelated documents; one publishes first. | The other may safely revalidate/rebuild and publish, or return a truthful retryable conflict; never silently clobber an acknowledged change. |
+| AC-28 | A request is already committed locally, but synchronization encounters remote Git divergence. | Retain the local commit and audit; report remote pending/conflicted separately, without claiming the local request was aborted. |
+
+The concrete request-level error schema, audit-only handling of a rejected attempt, choice of Git staging mechanism and test limits remain open. See [request-level conflict design proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
+
 ## 7. Architectural evaluation and open requirements
 
 See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-local-first-storage-evaluation.md), the [draft document and operation contract](document-operation-contract.md), [QMD search/indexing assessment](../research/2026-11-04-qmd-search-and-indexing-assessment.md), [YAML path research](../research/2026-10-23-yaml-paths-and-partial-reads.md), and [partial-read best-practices research](../research/2026-10-23-partial-read-agent-conventions.md).
@@ -150,7 +162,7 @@ See [Local-first Git hub-and-spoke architecture](../architecture/2026-10-23-loca
 - Direction of satellite synchronization: initial export-only projection versus optional import of externally authored changes into Git; execution location for satellite workers.
 - Local Git persistence implementation: command-line Git versus library, private object/worktree model, commit granularity, retention, and possible additional audit journal.
 - Git remote publication and scheduling, initial clone/bootstrap, partial history, and separate satellite projection semantics and freshness.
-- Conflict detection, merge policy, stale edits, external writer behavior, simultaneous creates, uncertain remote writes.
+- Exact safe-retry criteria and Git ref-conflict implementation; **owner-selected** fatal request-level concurrency conflict behavior is now recorded in FR-27 and AC-25–AC-28. Remote merge policy, external writer behavior, simultaneous creates and uncertain remote writes remain open.
 - Whether full application audit history must be synchronized through Git and independently verifiable across users.
 - Precise fatal request-level error and interruption behavior, individual document edit atomicity, request idempotency and durable audit for failed/no-op requests.
 - Detailed stale body-edit safety criteria, stronger preconditions for stale indexed YAML writes, strict optional preconditions, and whether context, three-way merge or line/hash anchors are used. Read coordinate/revision behavior is selected; quantitative bounds and error edge cases are still open.
