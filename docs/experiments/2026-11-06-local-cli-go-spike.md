@@ -18,8 +18,12 @@ Run from a source Git worktree with configured effective `user.name` and `user.e
 
 ```sh
 # New binding: creates .awl/project.yaml and a separate local managed bare Git store.
-# Remote is recorded but no network operation is performed.
-awl init --slug demo --remote 'git@example.invalid:team/demo-worklog.git' --json
+# New projects can start local-only; no remote is required for local writes.
+awl init --slug demo --json
+# Add the authoritative Git remote later; configuration only, no fetch/push.
+awl remote add 'git@example.invalid:team/demo-worklog.git' --json
+# Alternatively, init may configure the Git URL immediately:
+# awl init --slug demo --remote 'git@example.invalid:team/demo-worklog.git' --json
 
 # Direct project-scoped commands, with the project derived from the source worktree.
 printf '# Overview\n' | awl create Specs/overview.md --input - --request-id create-001 --json
@@ -48,7 +52,7 @@ These command spellings, input envelopes, numeric exit codes, and optional `--js
 4. **Audit and Git publication:** Stage private Git blobs/index, create a single content+audit commit for a completed changing request or an **audit-only commit** for completed no-op/all-ordinary-failed requests. Store compact versioned ordered member outcomes and request-ID+payload digest in the Git commit message. Publish with expected-old-ref `git update-ref`. Idempotent repeated IDs reuse a matching published result; same ID with changed content is rejected. Recheck operations against a new head on a failed CAS; abort if member outcomes change or history is replaced.
 5. **Separation:** No automatic sync, QMD, daemon, background worker, metadata mutation, global discovery, source Git commit or silent remote publication.
 
-The initial bootstrap currently **requires a remote URL** for a new binding; whether remote configuration can be omitted is an **open product design question**, not a permanent approved requirement.
+**Owner-selected follow-up (2026-11-06):** `awl init --slug demo` creates a **local-only** managed project; `--remote` is optional. The experimental `awl remote add <git-url>` records a Git authority **later** and performs no network operation. Repeating the same value is idempotent, adding a different value is rejected, and observed partial two-config updates can be repaired by repeating the same command. This is not a transactional or power-loss proof. Remote replacement, file-transfer satellite definitions and out-of-repository project lookup remain separate design work.
 
 ## Environment and verification
 
@@ -62,7 +66,9 @@ go vet ./...
 go test ./... -race -count=2
 ```
 
-**Observed:** 9/9 distinct Go integration tests passed, including exact CRLF/BOM byte preservation, ordinary errors and audit-only publication, same-ID replay, changed-payload rejection, composite partial completion, linked worktree reuse, invalid preflight rejection, optional canonical symlink safety, commit-message audit inspection, and **two concurrent disjoint creates**. A separate manual CLI smoke test verified actual `init`, `create`, `read`, `edit`, failed edit, and replay output. Go tests use temporary source and bare managed Git repositories, not the user's actual vault or production repository. No race-detector alert was reported in two consecutive test suite repetitions.
+**Initial PR #7 publication (2026-11-06):** 9 distinct Go integration tests passed, including exact CRLF/BOM byte preservation, ordinary errors and audit-only publication, same-ID replay, changed-payload rejection, composite partial completion, linked worktree reuse, invalid preflight rejection, optional canonical symlink safety, commit-message audit inspection, and **two concurrent disjoint creates**. A separate manual CLI smoke test verified actual `init`, `create`, `read`, `edit`, failed edit, and replay output. Go tests use temporary source and bare managed Git repositories, not the user's actual vault or production repository.
+
+**Follow-up on the same experimental branch (2026-11-06):** 14 distinct Go integration tests now pass. New tests exercise local-only initialization, adding/remotely re-adding a Git URL with no network call, rejection of a different/unsafe URL, CRLF/comment retention and explicit recovery after partial configuration, concurrent duplicate remote-add, and read/remote-configuration behavior without a Git committer identity. Ran `go test ./... -count=1`, `go vet ./...`, `go test ./... -race -count=2` and verified `gofmt -l` produced no file names; all completed successfully. **No real remote Git synchronization or external transport test was performed.**
 
 ## Critical unverified gates and exclusions
 
@@ -72,7 +78,9 @@ go test ./... -race -count=2
 - **Configuration YAML is intentionally a narrow parser** for fields written by this spike, not a general YAML parser. It does not support arbitrary quoting, aliases or complex YAML structures. A production decision must address YAML validation/compatibility and explicit `init` inputs before relying on these bytes.
 - **Edit safety is limited** to a unique literal body-text replacement. No semantic patch, concurrent same-target automatic merge, full frontmatter parser, structured YAML mutation, delete/rename, multi-page read, large-file memory budget, or binary document support is provided.
 - **CLI and OS support remain experimental:** no Windows/macOS build or test; no pinned minimum Git floor; no stable request schema, option placement, help/version UX, output limits, standardized exit status, error schema, packaging, or installation/upgrade procedure.
-- **Search/sync are separate future slices:** QMD is still an evaluation candidate, not a mandatory dependency; remote Git reconciliation and push remain unimplemented and are never triggered by local writes.
+- **Search/sync are separate future slices:** QMD is still an evaluation candidate, not a mandatory dependency; remote Git reconciliation and push remain unimplemented and are never triggered by local writes. `remote add` only changes awl-owned source/canonical configuration, not Git remotes or provider state.
+- **Config update atomicity:** adding a remote updates two config files independently; cooperative awl initialization locking prevents simultaneous awl writes, and same-URL retry repairs the two expected one-sided states. Neither crash-atomicity across both files nor a race with an out-of-band config writer is proven. A partial failure is observable as a binding mismatch until repair.
+- **Go review debt:** see the [Go code review and remote setup follow-up](2026-11-06-go-code-review-and-remote-config.md) for specific idiom/YAGNI checks and outstanding subprocess cancellation, YAML parsing, fault-injection, audit lookup and portability concerns.
 - This is **not a replacement for PR #2/#4/#6 review**, and no source/document migration, repository merge, automatic sync, global project lookup or production rollout is authorized by the test results.
 
 ## Next small increment
