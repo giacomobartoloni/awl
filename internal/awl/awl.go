@@ -119,6 +119,15 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
 			return c.emitError(fail("USAGE", "init accepts --slug, optional --remote, --repo-dir, --json"))
 		}
+		repoDirProvided := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "repo-dir" {
+				repoDirProvided = true
+			}
+		})
+		if repoDirProvided && *repoDir == "" {
+			return c.emitError(fail("INVALID_REPO_DIR", "--repo-dir must name a new absolute directory"))
+		}
 		p, e := initialize(*slug, *remote, *repoDir, c.explicit)
 		if e != nil {
 			return c.emitError(e)
