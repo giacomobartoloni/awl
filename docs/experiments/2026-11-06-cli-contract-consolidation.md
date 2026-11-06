@@ -14,7 +14,7 @@ The table below describes **currently implemented experimental behavior**. It do
 
 | Command | Accepted experimental invocation | Plain-text success | JSON success | Boundaries / rejection |
 | --- | --- | --- | --- | --- |
-| `init` | `awl init --slug demo [--remote GitURL] [--json]` | `initialized` | `status=initialized`, `project` | Explicit bootstrap only; source Git worktree required; optional remote configuration does no network operation; incompatible binding rejected |
+| `init` | `awl init --slug demo [--remote GitURL] [--repo-dir /absolute/new.git] [--json]` | `initialized` | `status=initialized`, `project` | Explicit bootstrap only; source Git worktree required; optional remote configuration does no network operation; optional exact location for a **new** bare managed repository; incompatible binding rejected |
 | `remote add` | `awl remote add GitURL [--json]` | `remote_added` / `remote_unchanged` | `status`, `project` | Requires initialized local binding; same URL idempotent, changed URL rejected; no managed document commit or network I/O |
 | `ls` | `awl ls [directory] [--json]` | Sorted, project-relative Markdown paths, one per line | `status=ok`, `project`, `revision`, `paths` (empty array when none) | Enumerates ordinary Markdown blobs in one committed **managed** Git snapshot, not source Git; optional validated relative directory; read-only |
 | `read` | `awl read document.md [--json]` | Raw original bytes, no forced newline | `status=ok`, `project`, `revision`, `content` | Exact project-relative Markdown target; missing document is an error; JSON mode requires UTF-8; read-only |
@@ -25,6 +25,22 @@ The table below describes **currently implemented experimental behavior**. It do
 `--project <slug>` is a **leading** experimental selector and may only confirm the identity already resolved from the current source worktree. Its out-of-repository discovery behavior is deliberately **deferred**.
 
 For commands supporting a path before options, the current parser accepts `awl read Activities/a.md --json`, `awl ls Activities --json`, and `awl edit Activities/a.md --input - --json`. This is an observed implementation subset, not a general parser proposal.
+
+## Explicit managed repository path (experimental)
+
+The implemented `init --repo-dir <path>` override chooses the **exact absolute directory** in which to initialize the managed bare Git repository; it is not a base directory and does not append the project slug. For example:
+
+```sh
+mkdir -p /mnt/data/awl-stores
+awl init --slug demo --repo-dir /mnt/data/awl-stores/demo.git --json
+```
+
+- The parent directory must already exist and must not resolve through a symlink. The supplied absolute path must be clean (no `..`/`.` normalization), compatible with the current minimal plain-YAML local binding scalar, and outside the source worktree and its Git common directory.
+- The target must be **absent** for first initialization. Existing directories, files, and symlinked target locations are not adopted or overwritten. An occupied target is rejected before creating awl's source project configuration.
+- A matching `--repo-dir` on re-initialization reuses the already registered managed Git store. Omitting it on re-initialization also reuses the stored path; a different value fails with `PROJECT_CONFLICT`, not a store migration.
+- If omitted on first initialization, the established `XDG_DATA_HOME/awl/repos/<slug>-<random>` location remains unchanged, defaulting to `~/.local/share` when `XDG_DATA_HOME` is unset. The location is persisted in `<git-common-dir>/awl/local.yaml` as `storage.localRepo`.
+- Creation is **not** a proven cross-file transaction: an interruption after reserving/initializing the custom directory but before publishing both project config files may leave a partial target. There is no automatic adoption or destructive cleanup; report the error and inspect/recover explicitly.
+- These names, validation details, and errors are an **implemented experimental subset**, not an approved release-level CLI contract.
 
 ## Error, exit, and revision semantics
 
