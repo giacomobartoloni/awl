@@ -146,11 +146,23 @@ func (c *cli) writeRequest(req request) int {
 		if _, e = gitText(p.GitDir, nil, nil, "update-ref", managedRef, commit, head); e == nil {
 			return c.emit(result{Status: status, Project: p.Slug, RequestID: req.RequestID, Commit: commit, Tree: tree, Members: members})
 		}
-		// CAS lost. Re-evaluate original intent against the new complete snapshot.
-		newer, e := headCommit(p)
-		if e != nil {
-			return c.emitError(e)
+		// A failed update-ref is not proof of a CAS race. Observe the actual
+		// managed ref before deciding whether publication succeeded or can be
+		// safely retried against a different snapshot.
+		newer, observeErr := headCommit(p)
+		if observeErr != nil {
+			return c.emitError(fail("PUBLICATION_OUTCOME_UNKNOWN", "Git ref update failed and the resulting head cannot be verified; inspect and retry using the same request ID"))
 		}
+		if newer == commit {
+			// The ref now points at our audited commit, despite the subprocess
+			// reporting failure (for example, after an interrupted response).
+			return c.emit(result{Status: status, Project: p.Slug, RequestID: req.RequestID, Commit: commit, Tree: tree, Members: members})
+		}
+		if newer == head {
+			return c.emitError(fail("GIT_PUBLICATION_FAILED", "Git ref update failed without advancing the managed head; request was not published and can be retried"))
+		}
+		// Another writer advanced the ref. Re-evaluate the original intent
+		// against the new complete snapshot, without dropping prior results.
 		if _, e = gitText(p.GitDir, nil, nil, "merge-base", "--is-ancestor", head, newer); e != nil {
 			return c.emitError(fail("CONCURRENT_REQUEST_CONFLICT", "managed Git history was replaced during publication"))
 		}
