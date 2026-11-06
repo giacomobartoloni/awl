@@ -1,0 +1,77 @@
+# Go Code Review and Local-Only Remote Configuration — Experimental Follow-up
+
+**Status:** code review and test-backed experimental update; **not a production quality certification or an ADR**.  
+**Date:** 2026-11-06.  
+**Scope:** PR #7 Go implementation (`cmd/awl`, `internal/awl`) and the owner's request to initialize without a remote and assign an authoritative Git remote later. No Git network sync, rsync/rclone adapter, QMD integration or product release is implemented.
+
+## 1. Scope and exact behavior
+
+```sh
+# Start a managed awl project completely offline/local-only.
+awl init --slug demo --json
+awl create Activities/one.md --input - --json < one.md
+awl read Activities/one.md
+
+# Store the initial remote location only when one is available.
+awl remote add git@example.invalid:team/demo-worklog.git --json
+# An identical second call reports remote_unchanged; a different URL is rejected.
+
+# Still supported as a single-step choice:
+awl init --slug demo --remote git@example.invalid:team/demo-worklog.git --json
+```
+
+- ".awl/project.yaml" may omit the `storage.remote` key entirely; the canonical `<git-common-dir>/awl/local.yaml` binding similarly omits `binding.remote`. Missing remote means **deliberately local-only**, not a corrupt project.
+- `remote add` changes these two awl configuration files only. It checks the previously initialized source binding and managed bare Git repo, never creates a document/request commit, does not modify the source Git `origin`, and performs **no network I/O**. Retrying the same remote returns `remote_unchanged`; a different existing remote returns `REMOTE_ALREADY_CONFIGURED`.
+- A crash/interruption after only one config file is updated leaves a detectable binding mismatch. An explicit identical `remote add` can repair those two narrowly defined partial states. This does **not** establish a cross-file atomic transaction, safe editing against an out-of-band writer, or power-loss durability.
+- No new global project registry, remote transport type selector, `--project` out-of-repository lookup, automatic Git push, or rsync/rclone configuration was introduced.
+
+## 2. Go idioms and Clean Code review: concrete observations
+
+| Check | Finding | Action or gate |
+| --- | --- | --- |
+| **Standard idioms** | Uses Go's `error` return pattern, small unexported data types, `defer` for resource cleanup, `testing.T` with `t.TempDir()`, `io.Reader`/`io.Writer` for CLI streams, and `encoding/json`. Go stdlib-only module; no speculative plugin/dependency container. | Keep concrete types and avoid premature interfaces; idiom aligns with Go's [Code Review Comments](https://go.dev/wiki/CodeReviewComments) and [Effective Go](https://go.dev/doc/effective_go). |
+| **Formatting/static checks** | All source is `gofmt`-clean; `go vet ./...` and two full `go test ./... -race -count=2` runs passed in Linux/amd64. | Not evidence of OS portability, crash durability or semantic conflict safety. |
+| **Cohesion** | The previous large `gitstore.go` mixed config/bootstrap/remote mutation with Git object/read/write logic. | Split the concrete implementation into `awl.go` (CLI/operations input), `config.go` (binding/init/remote/config validation), and `gitstore.go` (Git subprocess and local history/audit). No new interface for a not-yet-implemented backend. |
+| **Read-only concerns** | Initial resolution erroneously required Git author identity even to read a document or add a URL. | Corrected: only mutation/bootstrap that produces Git commits requires identity; later `read` and `remote add` work without it. Added integration test. |
+| **Markdown/config fidelity** | The narrow YAML config reader initially rejected CRLF line endings during remote add. | Corrected parsing without normalizing original bytes; tests verify comments and CRLF survive one-sided repair. The configuration parser **is still not a general YAML implementation**. |
+| **Shell / Git invocation** | `exec.Command` passes explicit Git arguments and strips inherited `GIT_*` environment variables before applying intended overrides. | Good bounded experiment; **missing context deadlines/cancellation**, remote credential/process environment controls and bounded Git-output handling need hardening before remote operations. Prefer `exec.CommandContext` with an explicit `context.Context` at the future sync boundary. |
+| **Request integrity** | Private Git index, controlled ref update, request-ID/digest and commit-message audit demonstrate a useful local mechanism. | **Not production-proven**: same-target deterministic CAS fault injection, after-ref lost-response tests, unreachable objects, history-wide audit lookup scaling, duplicate JSON key detection, controlled crash/power-loss recovery remain gates. |
+| **Config atomicity** | Config files are each written through a temporary file plus `rename`; one coarse cooperative awl setup lock is used. | This is **not cross-file ACID**, nor a proven guarded compare-and-replace against another external config writer. Preserve fail-closed mismatches and review fsync/permission/path/symlink handling. |
+| **OS / portability** | Uses `syscall.Flock`, filesystem hard links and XDG Linux application-data path in the spike. | Platform-specific implementation; do not infer Windows/macOS support. Choose target OS profile and lock/fsync policy before shipping. |
+| **Code size** | Local engine remains moderately sized and concrete; the current `config.go` handles both setup and narrow YAML parsing. | Prefer small behaviorally coherent functions and extracted files only where actual maintenance/tests require them; a universal `Repository`, `Provider`, `SyncStrategy` hierarchy is **not justified** by the current Go code. |
+
+**Assessment:** the code is **gofmt/vet/race-test clean and more cohesive after targeted fixes**, but this does **not** justify claiming that all Go or Clean Code best practices have been satisfied or that the local publication engine is production-safe. The high-risk items above are explicit blockers. `staticcheck`/`golangci-lint` were **not executed**, as those tools were not installed in the available environment.
+
+## 3. Test evidence (actual Go code)
+
+On **Go 1.23.2**, **Git 2.47.3**, **Linux/amd64**, the following were executed on the local experimental source and passed:
+
+```sh
+gofmt -l cmd/awl/main.go internal/awl/*.go
+# No formatting differences reported.
+go test ./... -count=1
+go vet ./...
+go test ./... -race -count=2
+```
+
+**14 distinct top-level Go integration tests passed**, versus 9 on the prior PR #7 snapshot. The new ones cover local-only initialization, remote-add idempotency and conflict detection, invalid-remote rejection/no config mutation, one-sided interrupted config repair with CRLF/comment preservation, two concurrent identical remote adds, and identity-free reads/remote configuration after bootstrap. The tests use isolated temporary source and managed Git repositories; no actual network fetch/push, rsync or rclone invocation was tested. The race detector reports no race in Go-managed memory; it does not prove cross-process Git or filesystem crash safety.
+
+## 4. Interface boundaries for future sync engines
+
+The Go code intentionally does **not** acquire a `SyncBackend`/`Transport` interface solely because the product might later support rsync or rclone. Preserve a narrow concrete Git-local store. Review the independent [sync modes and backends design](../architecture/2026-11-06-sync-backends-and-transports-design-proposal.md) before writing network components:
+
+1. Git remains authoritative under current merged requirements; `awl remote add` configures a **Git** URL, not an arbitrary rclone endpoint.
+2. Git fetch/reconcile/push has different semantics from one-way rsync/rclone file projections. Do not hide the difference under a lowest-common-denominator `Sync()` interface.
+3. Introduce capability-based ports only when a second actual transport is prototyped and tested, following Go's [avoid-unnecessary-interfaces](https://google.github.io/styleguide/go/best-practices.html) recommendation.
+4. Keep explicit sync/index commands separate from locally accepted mutation commits. A missing Git remote is not a local-write failure.
+
+## 5. Unresolved high-priority review tasks
+
+- Determine precise `UNKNOWN_OUTCOME` and ref durability behavior under process termination, actual filesystem failure and lost-response retry.
+- Deterministically inject incompatible same-target concurrent edits and prove rejected-request/no-published-commit behavior in Go.
+- Decide production YAML semantics and forward-compatible configuration migration before adding arbitrary remote/provider fields.
+- Add bounded subprocess cancellation, more robust error classification and output/path limits; validate security of Git environment/config and remote URL syntax, including credential-free SSH forms.
+- Select portability profile, supported Git versions, implementation release and test strategy; measure history scanning overhead before removing the 5k-audit limit.
+- Review options for out-of-band file writer races during two-file `remote add`; do not claim external-writer CAS or transactional updates from current tests.
+
+**Verification limit:** No code from this branch was merged to `main`; no backend design ADR was accepted. This is an experimental refinement of PR #7 plus a separate architectural proposal, not a deployment milestone.
