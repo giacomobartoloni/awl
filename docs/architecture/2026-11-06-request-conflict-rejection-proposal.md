@@ -154,4 +154,22 @@ These scenarios are requirements/experiment proposals, **not executed tests**. C
 - **Owner-confirmed:** no commit of any kind for concurrently rejected requests; only the response conveys that rejected attempt. **Open:** audit of completed nonconcurrency all-failed/no-op requests; exact identity/response schema; CAS versus short lock policy; platform durability; proof of safe same-document retries; remote branch policy.
 - **Defer:** mandatory micro-worktree per request, general three-way semantic auto-merger, CRDT engine, daemon, database audit authority, provider-neutral local storage, remote per-agent branch fleet and automatic distributed rollback.
 
-**Provenance:** Owner discussion on 2026-11-06 and inspected repo docs/research. The present PR changes documentation only. No `awl` code, test execution, measured performance or architectural ADR is claimed.
+## 10. Preliminary isolated Git CLI probe (2026-11-06)
+
+**Evidence status:** A standalone Python harness operated on temporary **bare Git repositories**, not on `awl` application code or user data. It is a deliberately narrow mechanism test, not implementation verification, a platform benchmark, a crash-recovery test or an accepted architecture.
+
+**Fixture and mechanics:** Git **2.47.3**, Python **3.13.5**, local POSIX `fcntl.flock` protecting cooperating writers during final revalidation, Git commit construction and expected-old-ref publication. Two real OS processes each read the same initial Git head before racing. Each request evaluates exact-target replacement operations in memory, uses a private temporary `GIT_INDEX_FILE`, writes a tree and a commit with a compact illustrative `Awl-Request-ID` trailer only after final validation, then advances the managed ref by `git update-ref <ref> <new> <old>`. Each test used a fresh temporary Git repository and asserted actual Git history and document bytes.
+
+| Probe | Observed result |
+| --- | --- |
+| P1: two concurrent requests edit different Markdown files | Both were published as separate commits; two request commits advanced the local head; both document changes survived |
+| P2: one request changes an API line, another attempts a different replacement of the same original line *and* stages an unrelated plan edit | One request was published; the other returned `conflict`; **only one** request commit was added, the rejected request ID was absent from reachable Git history, the plan edit from the rejected request was absent, and the shared head did not advance during its rejection |
+| P3: ordered composite with two valid replacements and an invalid middle member | One content commit published the two valid edits, preserved the original middle document, and recorded the middle member failure in the illustrative commit-message audit |
+
+Five sequential full harness runs passed (15 scenario executions). **They do not establish concurrent performance, robustness across operating systems, recovery after a crash, remote push/reconciliation safety, file-format byte fidelity on arbitrary Markdown, YAML pointer safety or correctness of production `awl`.** The private prototype code and machine-readable results were retained as conversation artifacts, not added to this PR; permanent repo inclusion is a separate code-review decision.
+
+**Important applicability limit:** A POSIX writer lock only coordinates cooperating local processes. External ref writers can race; `update-ref` remains necessary. This probe validated rejection **before constructing** the candidate commit while holding the lock. Optimistic commit-before-CAS may leave unreachable Git commit objects even when the rejected request creates no **reachable/published** commit; the owner's zero-commit guarantee is about the authoritative history, and an exact zero-unreachable-object requirement would need additional implementation constraints.
+
+**Next proof gates:** deterministic fault injection before/after commit-object creation and ref publication; durable idempotency lookup after a lost response; platform flush safety; independent writers without/with lock and crash cleanup; real YAML/Markdown patch validation; remote divergence; scale under contention. No benchmarks or power-loss guarantees are claimed.
+
+**Provenance:** Owner discussion on 2026-11-06, GitHub requirements/PRs and the isolated Git CLI probe. This PR modifies documentation, not `awl` product code or an ADR. The mechanism was tested in a standalone harness only.
