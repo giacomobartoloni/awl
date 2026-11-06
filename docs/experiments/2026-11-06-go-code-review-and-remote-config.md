@@ -75,3 +75,29 @@ The Go code intentionally does **not** acquire a `SyncBackend`/`Transport` inter
 - Review options for out-of-band file writer races during two-file `remote add`; do not claim external-writer CAS or transactional updates from current tests.
 
 **Verification limit:** No code from this branch was merged to `main`; no backend design ADR was accepted. This is an experimental refinement of PR #7 plus a separate architectural proposal, not a deployment milestone.
+
+
+## 6. Follow-up source review: explicit Go hardening gates (2026-11-06)
+
+**Source re-inspected:** current experiment branch files internal/awl/awl.go, internal/awl/config.go and internal/awl/gitstore.go, plus the existing Linux integration suite. This addendum is a **static review**, not another execution of go test/vet/race. The earlier recorded 14-test result remains the only stated runtime evidence.
+
+### Required before promoting this to production
+
+| Priority | Current code observation | Required idiomatic Go change / proof |
+| --- | --- | --- |
+| P0 — subprocess lifetime | gitstore.go:git uses exec.Command and cmd.Output without an invocation context, deadline or bounded capture. | Introduce request-scoped context.Context and exec.CommandContext; use explicit cancellation/timeouts appropriate to local vs network calls, bounded stdout/stderr and controlled process environment. No ambient shell. Ensure an interrupted command does not lie about ref publication. |
+| P0 — accurate publication errors | writeRequest currently handles **any** failed git update-ref as if it were a lost compare-and-swap race. A repository I/O/permission failure may be retried and end as a misleading conflict. | Only retry when **the managed ref was actually observed to advance** and revalidation is safe. Preserve a typed infrastructure error if the ref remains unchanged; for ambiguous interruption, inspect whether the intended request commit was published before reporting a definitive result. |
+| P0 — crash and CAS safety | CAS candidate commit is created before ref update; local races are partially tested, but the experimental suite does not inject same-target CAS failure or process death before/after accepted ref update. | Add deterministic hooks/fault fixtures with two processes, after-ref lost response and audit-only commit replay; distinguish unreachable speculative object creation from published history. State fsync/durability limitations. |
+| P1 — configuration consistency | remote add updates source project.yaml and canonical local.yaml in two separate atomic-per-file replacements. Code checks existing content before rename while an out-of-band writer might race. | Treat a one-sided update as observable/recoverable; test changed input and symlink swaps, reject unexpected external concurrent edits, and decide cross-file durability before claiming atomicity. Preserve CRLF/comments and reject unsafe YAML. |
+| P1 — metadata/input robustness | configRead is a consciously narrow YAML subset; strictJSON rejects unknown fields/trailing values but does not detect duplicate object keys. | Select and test a real safe YAML strategy before supporting arbitrary project config; add duplicate JSON key rejection for machine requests and bounded audit parsing. Do not introduce broad YAML reserialization that modifies unrelated bytes. |
+| P1 — audit growth | findAudit scans up to roughly 5,000 commits, failing closed above that limit. | Measure the real lookup cost/retention and design a correct recovery/lookup approach without prematurely adding another authoritative database. |
+| P1 — platform guarantee | Linux XDG paths, syscall.Flock and hardlink publication are platform-specific. | Choose explicit supported OS/filesystem profile and run cross-platform lock/atomicity tests before portability claims. |
+
+### Clean Code / YAGNI choices that remain intentional
+
+- Keep the existing small package and **concrete** local Git functions for now; splitting CLI input, config/bootstrap and Git store was useful because each has independent behavior/tests. Do not create empty packages, a service locator, inheritance-like abstractions or a generic provider manager.
+- Future GitSync and snapshot export have **distinct semantics**. Introduce a tiny consumer-owned interface only when a second tested implementation requires one; see the separate [capability-based sync design](../architecture/2026-11-06-sync-backends-and-transports-design-proposal.md), PR #8. Do not retrofit rsync/rclone into the local document writer.
+- Follow Go idioms: errors returned and wrapped with context; errors.Is/As for domain boundaries; context passed explicitly as the first argument to cancellable operations; explicit ownership of locks/files; table-driven cases where useful; use temp repositories for integration tests. Favor readable functions over arbitrary method-count/line-count rules.
+- Record reproducible review evidence: gofmt, go vet, go test, go test -race and any additional linter results with tool versions and environment. **A clean linter result is not a substitute for conflict/crash correctness.**
+
+**Verification status:** documentation-only addendum; the code and test results have not changed in this amendment. These issues are **review gates**, not claims that the behavior is already corrected.
