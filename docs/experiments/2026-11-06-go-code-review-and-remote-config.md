@@ -101,3 +101,21 @@ The Go code intentionally does **not** acquire a `SyncBackend`/`Transport` inter
 - Record reproducible review evidence: gofmt, go vet, go test, go test -race and any additional linter results with tool versions and environment. **A clean linter result is not a substitute for conflict/crash correctness.**
 
 **Verification status:** documentation-only addendum; the code and test results have not changed in this amendment. These issues are **review gates**, not claims that the behavior is already corrected.
+
+
+## 7. Modular-monolith hardening increment: Git ref publication and subprocess bounds (2026-11-06)
+
+**Scope:** implementation and automated verification of two local Go hardening gaps identified in §6. This is a further experimental increment in [PR #7](https://github.com/giacomobartoloni/awl/pull/7) following the owner's [ADR 0001 modular-monolith decision](https://github.com/giacomobartoloni/awl/blob/docs/sync-modes-review-2026-11-06/docs/adr/0001-modular-monolith.md). No new package hierarchy, backend interface, service, network synchronizer or project selection mode was introduced.
+
+### Concrete changes
+
+- **Correct Git publication classification:** after a failed `git update-ref`, observe the actual managed ref. If it points at the candidate audited commit, report the verified local commit as accepted; if it remains at the original head, return `GIT_PUBLICATION_FAILED` rather than an invented concurrent conflict; if the head cannot be observed, return `PUBLICATION_OUTCOME_UNKNOWN`; only a genuinely advanced competing head enters the existing CAS revalidation path.
+- **Bounded Git subprocess execution:** `gitContext(ctx, ...)` uses `exec.CommandContext` with explicit argv and controlled Git environment. Existing local callers use a 45-second per-command timeout with `context.WithTimeout`, an output writer that drains but caps retained stdout to 32 MiB and stderr to 1 MiB, and a short process wait delay. Git output overflow is a typed `GIT_OUTPUT_LIMIT` error.
+- **New tests:** `TestGitRefLockFailureIsNotMisclassifiedAsConcurrentConflict` creates a real managed-ref lock and checks no publication; `TestGitRefPublishedDespiteFailedSubprocessResponse` uses a test-only Git wrapper to fail after a successful ref update and verifies recovery without duplicate audit; `TestGitContextCancellationAndBoundedCapture` checks context-error propagation and bounded output capture.
+- **Continuous integration:** added a minimal `.github/workflows/go.yml` with `gofmt`, `go vet ./...`, and `go test -race -count=1 ./...` on pull requests and pushes to main. The GitHub Actions test runner uses Linux/amd64, Go 1.23.12 and Git 2.56.0. Run [42256716037](https://github.com/giacomobartoloni/awl/actions/runs/42256716037) completed **successfully** with all workflow steps green.
+
+### Remaining explicit limits
+
+This increment does **not** pass a caller-owned cancellation context through the entire CLI/request stack; the compatibility wrapper uses a fresh per-command timeout. Process-kill/power-loss durability remains unverified. The new test observes an ambiguous **subprocess** exit after Git succeeds; it is not a real process-crash test. The code still needs deterministic incompatible same-target CAS fault injection, larger-history audit lookup evaluation, bounded whole-request duration and secure remote Git credential handling before production. `rsync`, `rclone`, remote sync and alternate authoritative backends remain unimplemented.
+
+**Evidence status:** the workflow run named above verifies the actual code on that commit. No standalone local container execution of the full Go module was performed in this increment; later documentation-only commits are not themselves evidence of new runtime behavior. The experimental PR remains draft and `main` remains unchanged unless separately merged.
