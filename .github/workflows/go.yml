@@ -28,3 +28,5 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Repeat deterministic same-target conflict test
         run: go test -race -count=8 -run TestConcurrentIncompatibleCompositeAbortsWithoutCommit ./internal/awl
+      - name: Repeat SIGKILL publication recovery test
+        run: go test -race -count=8 -run TestSIGKILLAtGitPublicationBoundary ./internal/awl
