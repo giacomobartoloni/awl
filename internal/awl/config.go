@@ -160,6 +160,18 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		if e = validateRepoDir(repoDir, root, common); e != nil {
 			return project{}, e
 		}
+		// When no canonical binding exists, refuse an occupied target before
+		// creating .awl or any Git-common-dir bookkeeping. Reinitialization
+		// with the same already-bound location remains permitted below.
+		if _, bindingErr := os.Lstat(filepath.Join(common, "awl", "local.yaml")); os.IsNotExist(bindingErr) {
+			if _, targetErr := os.Lstat(repoDir); targetErr == nil {
+				return project{}, fail("REPO_DIR_EXISTS", "explicit repository directory already exists")
+			} else if !os.IsNotExist(targetErr) {
+				return project{}, targetErr
+			}
+		} else if bindingErr != nil {
+			return project{}, bindingErr
+		}
 	}
 	if e = noSymlinkDir(filepath.Join(common, "awl")); e != nil {
 		return project{}, e
