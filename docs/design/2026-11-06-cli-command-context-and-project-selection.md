@@ -11,10 +11,10 @@
 
 - Everyday invocation follows **`awl <command> [arguments]`**, not a mandatory `awl document <command>` or `awl <project> <command>` prefix.
 - The **project is implicit** when it can be safely determined from the invoking repository/worktree context.
-- An **explicit global `--project <slug>` selector** is available when a different or out-of-context configured project must be targeted.
+- An **explicit `--project <slug>` selector** is part of the CLI direction. Its initial semantics are scoped to an already resolvable source-repository context; how it could locate a project **outside that source repository is deliberately not defined at this stage**.
 - CLI remains shell-invocable and harness-agnostic. Git synchronization and search-index refresh remain **separate, explicitly invoked, recoverable operations**, not automatically executing jobs.
 
-**Not yet approved:** exhaustive verb list; detailed flags; exact global-option parsing positions; request JSON schema; numerical exit codes; setup/registry implementation; auto-completion; non-Git project discovery; QMD selection. Commands shown below illustrate the intended interface but are not evidence of executable `awl` code.
+**Not yet approved:** exhaustive verb list; detailed flags; exact global-option parsing positions; request JSON schema; numerical exit codes; auto-completion; non-Git project discovery; QMD selection. **Explicitly deferred, without design work now:** resolution of `--project <slug>` when invoked outside that project's source repository. Commands shown below illustrate the intended interface but are not evidence of executable `awl` code.
 
 **Previous research:** The [2026-10-23 AgentWorklog core-requirements working specification](https://drive.google.com/file/d/1Y0GFyS76sZWsEaJ5k0CQ6qoUo33Diqzf/view) proposed `awl read muse/Activities/example.md` and `awl ls muse/Activities` as *non-normative* examples. The owner has since favored **separate implicit/explicit project selection** instead of embedding the slug in the document path. [PR #2](https://github.com/giacomobartoloni/awl/pull/2) contains project/worktree configuration and a candidate `awl read Activities/example.md` command; [PR #4](https://github.com/giacomobartoloni/awl/pull/4) contains request-level Git publication and audit behavior; [PR #5](https://github.com/giacomobartoloni/awl/pull/5) evaluates QMD. All are still documentation proposals, not merged runtime functionality.
 
@@ -50,12 +50,14 @@ awl apply --input - --json
 awl status --json
 ```
 
-Explicit selection from an appropriate configuration scope:
+Explicit selection while already in a configured `muse` source worktree (illustrative):
 
 ```sh
 awl --project muse read Activities/example.md
 awl --project muse sync
 ```
+
+**These examples do not specify or promise behavior for `--project muse` from outside the `muse` source repository.**
 
 **Input/output convention:** `--input -` and `--json` are *candidate* flag names; the 2026-11-04 [PR #2 CLI section](https://github.com/giacomobartoloni/awl/pull/2) used `--format json` and structured stdin as examples. Choose one output spelling during final parser review. Structured input must remain unambiguous and must not rely on shell interpolation; no mutation may require caller-supplied Git revision IDs.
 
@@ -75,10 +77,10 @@ Document path arguments are **project-relative document paths**, regardless of w
 
 ## 4. Explicit `--project <slug>` selection
 
-- An explicit selector has priority over the *implicit selection*. It is **not** permission to bypass project authorization, source-binding validation, Git audit, or target path rules.
+- Within a resolvable source-repository context, an explicit selector must not bypass project authorization, source-binding validation, Git audit, or target path rules. The full precedence/override behavior remains a CLI parser design detail.
 - Reject unknown, duplicate or ambiguous slugs rather than choosing whichever configured project is found first; never treat a source repository's name or an arbitrary filesystem directory as the slug.
-- When an explicitly selected project differs from the current source worktree's project, do **not** silently combine the worktree's local identity/configuration with the other project's managed repository. Resolve the selected project's own validated configuration and attribution/provenance where available.
-- **Open design gate:** PR #2 deliberately does not introduce a global registry. A project-selection mechanism outside its source-worktree context (or a source-less project) requires an explicit, testable way to discover configured projects by slug. Do **not** invent an always-on registry, implicit home-directory search, or new configuration layer just to make illustrative `--project` examples appear implemented. If no unambiguous installed mapping is available, report a project resolution error.
+- Do **not** silently combine one source worktree's identity/configuration with a different project's managed repository. Selection of another project from an unrelated source worktree is **not specified by this initial contract**.
+- **Owner-directed scope deferral (2026-11-06):** Do **not** define, design, or select a mechanism for resolving `awl --project muse ...` when executed **outside the `muse` source repository**. In particular, do not specify a global project registry, directory search, mapping file, lookup algorithm or out-of-context error contract. This use case is excluded from the first implementation contract and its acceptance tests. Revisit only after a separate, explicit product decision.
 - Keep parsing deterministic. Repeated conflicting project flags and unknown options are errors; precise flag position rules and the relationship to future environment variables remain unselected.
 
 ## 5. Initialization boundary
@@ -105,8 +107,8 @@ In a source Git worktree, setup should validate or prepare `.awl/project.yaml`, 
 | CTX-AC-02 | `awl read` invoked from two linked worktrees with consistent `.awl/project.yaml` | Same canonical personal config and managed Git repo; no per-worktree duplicates |
 | CTX-AC-03 | `awl read` without `--project` outside any recognized initialized source context | Actionable `PROJECT_NOT_RESOLVED`-class error; no arbitrary project fallback |
 | CTX-AC-04 | The shared branch's slug or remote target conflicts with initialized local binding | Fail before writing; no silent project rebind or new managed repository |
-| CTX-AC-05 | `awl --project muse read ...` where `muse` resolves unambiguously through an approved lookup | Operate only on `muse`; current unrelated worktree context cannot redirect it |
-| CTX-AC-06 | Explicit project slug is unknown, ambiguous, inaccessible or unsupported outside its source context | Fail with a precise diagnostic; do not infer a location or fabricate a registry |
+| CTX-AC-05 | From the initialized `muse` source worktree, invoke `awl --project muse read ...` | Select only the already validated `muse` binding; do not infer a different repository or context |
+| CTX-AC-06 | From an initialized source worktree, specify `--project` with a slug incompatible with its validated binding | Never silently redirect its writes to another managed repository; cross-project lookup and outside-repository resolution remain out of scope |
 | CTX-AC-07 | Safe re-run of `awl init` from another linked worktree | Reuse compatible initialized association; no duplicate Git store, overwrite or automatic source commit |
 | CTX-AC-08 | `awl read` before initialization | Read-only failure; no new config, Git store, search index or linked worktree created |
 | CTX-AC-09 | `awl create`, `awl edit` or `awl apply` with a project resolved implicitly | Same audit/concurrency and one-request publication guarantees as an explicitly selected project |
@@ -117,7 +119,7 @@ In a source Git worktree, setup should validate or prepare `.awl/project.yaml`, 
 ## 8. Review gates and scope control
 
 1. **Confirm concrete command spellings** and whether `awl project list` is an exception or `awl projects` should be used. Resolve `--json` versus `--format json`, structured input flag and stdin ambiguity.
-2. **Design explicit-slug lookup and non-source Git project setup** without violating PR #2's no-extra-registry assumption. Test configuration identity and remote validation before implementing.
+2. **Defer out-of-repository explicit project selection.** No lookup, global registry, mapping, directory search or acceptance contract for `awl --project muse ...` outside the `muse` source repository is needed now. Test only source-context identity and remote validation in the first increment. Stand-alone non-Git project setup remains a separate future topic.
 3. **Specify initial `init` inputs**, partial setup recovery, same-source linked-worktree behavior and path/ignore safety, without changing source Git config automatically.
 4. **Verify CLI parser and process behavior** on Go code using representative harness shells, read/write inputs, failures, non-TTY execution and linked worktrees. Do not substitute mock help output for tests.
 5. **Keep PRs separate:** PR #2 configuration/worktrees; PR #4 concurrency/audit; PR #5 QMD evaluation; this document supplies a **cross-cutting CLI-facing proposal** for eventual reconciliation, not a backdoor merge of their unmerged requirements.
