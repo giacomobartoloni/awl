@@ -2,7 +2,9 @@ package awl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -561,5 +563,24 @@ func TestGitRefLockFailureIsNotMisclassifiedAsConcurrentConflict(t *testing.T) {
 	}
 	if got := c.read(t, "Specs/retry.md"); !bytes.Equal(got, content) {
 		t.Fatalf("retry corrupted Markdown: %q", got)
+	}
+}
+
+func TestGitContextCancellationAndBoundedCapture(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := gitContext(ctx, "", nil, nil, "--version"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Git subprocess must preserve context error: %v", err)
+	}
+	var out boundedOutput
+	out.limit = 4
+	if n, err := out.Write([]byte("abc")); err != nil || n != 3 {
+		t.Fatalf("first write: n=%d error=%v", n, err)
+	}
+	if n, err := out.Write([]byte("defgh")); err != nil || n != 5 {
+		t.Fatalf("truncated write must still drain all bytes: n=%d error=%v", n, err)
+	}
+	if !out.overflow || out.String() != "abcd" {
+		t.Fatalf("unexpected bounded output state: overflow=%t contents=%q", out.overflow, out.String())
 	}
 }
