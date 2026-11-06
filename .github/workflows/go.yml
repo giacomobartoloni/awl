@@ -26,6 +26,8 @@ jobs:
         run: go vet ./...
       - name: Integration tests with race detector
         run: go test -race -count=1 ./...
+      - name: CLI user-contract tests
+        run: go test -race -count=2 -run TestCLIContract ./internal/awl
       - name: Repeat deterministic same-target conflict test
         run: go test -race -count=8 -run TestConcurrentIncompatibleCompositeAbortsWithoutCommit ./internal/awl
       - name: Repeat SIGKILL publication recovery test
