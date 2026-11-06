@@ -138,3 +138,21 @@ Use the **released v2.8.3 tag pinned exactly** on representative Markdown files,
 **Decision:** If the spike passes these gates at acceptable distribution and resource cost, **select QMD as the first search engine**, keeping Git as the only content authority and the QMD database disposable. If its runtime dependency or snapshot/projection burden defeats the product's deployment goals, reconsider a Go-native lexical fallback or a narrower initial search implementation as a new documented tradeoff; **do not preimplement parallel engines**.
 
 **Not yet done:** no pinned QMD installation, fixture indexing, search relevance evaluation, native-model provisioning test, benchmark, awl runtime integration, or OS-matrix validation is claimed by this reassessment.
+
+
+## 8. Owner-selected explicit, recoverable refresh policy (2026-11-06)
+
+**Status:** Owner-confirmed behavioral boundary for awl's **first implementation**, not proof that QMD itself has been selected, installed or tested. The owner prefers **explicit later-recoverable operations** for both Git remote sync and QMD/index refresh, without any mandatory automatic worker, daemon, per-request background subprocess or persistent work-queue engine.
+
+- Completing a local request must not wait for a QMD refresh or model embedding. The already accepted local Git commit remains accepted even if the index is missing, stale or corrupt.
+- An explicitly invoked **index refresh** (name/syntax undecided) reads a coherent committed Git content tree via an awl-controlled, project-scoped projection; if QMD is chosen, awl launches the QMD CLI itself with private configuration. The caller of this explicit operation may wait for completion. No claim is made that work continues after its process exits.
+- A separate explicit Git remote **sync** invocation is the only owner of Git fetch/reconcile/push. Never delegate a Git pull to QMD collection update hooks, and do not implicitly run configured shell hooks in untrusted QMD config.
+- A successful refresh records a **derived** content-tree checkpoint only after QMD confirms the relevant index is updated. An interrupted or failed refresh stays pending/stale/failed, not falsely current. When vectors lag behind refreshed lexical content, expose their availability separately; no silent declaration that hybrid retrieval is current.
+- A **Git audit-only commit** leaves document tree bytes unchanged; it can advance the remote-sync state but need not trigger content reindexing. The relevant search freshness comparison is content-tree identity (and independently verified derived-index state), **not just local commit SHA**.
+- Multiple commits can be coalesced into one explicit refresh of the latest available committed tree. Many CLI instances invoking refresh concurrently must not corrupt the shared QMD index or expose a partially built index as current; choose cross-process locking or safe isolation only after QMD spike evidence.
+- On a later CLI invocation, derive whether refresh is necessary from current committed Git document tree, last verified index checkpoint, and index availability. No automatic scheduling or durable queue is required for the first release. The exact checkpointer, status shape, retry policy and CLI command spellings remain design questions.
+- QMD is still the **first engine to trial**, **not an approved mandatory runtime dependency**. The upstream QMD 2.8.3 binary, Node/Bun requirements, model provisioning and refresh failure semantics must still pass the staged spike in §7.4.
+
+**Added acceptance proposals:** (QMD-AC-09) local Git content write acknowledged while QMD is absent -> index unavailable/pending, no rollback; (QMD-AC-10) completed audit-only commit -> no unnecessary content reindex; (QMD-AC-11) refresh invoked explicitly after multiple commits -> one up-to-date index checkpoint for the latest projected tree; (QMD-AC-12) interrupted refresh -> later explicit retry repairs derived data without rewriting source documents; (QMD-AC-13) CLI process exits without refresh -> no claim of automatic background completion.
+
+**No product implementation, running worker, QMD integration test, benchmark or automatic scheduling** is asserted by this documentation amendment.
