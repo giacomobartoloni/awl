@@ -61,8 +61,8 @@ func TestCLIContractInitExplicitRepoDirAndReuse(t *testing.T) {
 
 func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		target func(testCLI, string) (string, error)
+		name     string
+		target   func(testCLI, string) (string, error)
 		wantCode string
 	}{
 		{"relative", func(c testCLI, root string) (string, error) {
@@ -76,8 +76,12 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 		}, "INVALID_REPO_DIR"},
 		{"existing directory", func(c testCLI, root string) (string, error) {
 			dest := filepath.Join(root, "existing.git")
-			if err := os.Mkdir(dest, 0700); err != nil { return "", err }
-			if err := os.WriteFile(filepath.Join(dest, "untouched.txt"), []byte("Keep me"), 0600); err != nil { return "", err }
+			if err := os.Mkdir(dest, 0700); err != nil {
+				return "", err
+			}
+			if err := os.WriteFile(filepath.Join(dest, "untouched.txt"), []byte("Keep me"), 0600); err != nil {
+				return "", err
+			}
 			return dest, nil
 		}, "REPO_DIR_EXISTS"},
 		{"existing file", func(c testCLI, root string) (string, error) {
@@ -86,7 +90,9 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 		}, "REPO_DIR_EXISTS"},
 		{"symlink parent", func(c testCLI, root string) (string, error) {
 			link := filepath.Join(root, "shortcut")
-			if err := os.Symlink(root, link); err != nil { return "", err }
+			if err := os.Symlink(root, link); err != nil {
+				return "", err
+			}
 			return filepath.Join(link, "demo.git"), nil
 		}, "INVALID_REPO_DIR"},
 		{"source worktree", func(c testCLI, root string) (string, error) {
@@ -99,11 +105,17 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			c := fixture(t)
 			root := filepath.Join(filepath.Dir(c.Source), "explicit")
-			if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+			if err := os.Mkdir(root, 0700); err != nil {
+				t.Fatal(err)
+			}
 			dest, err := tc.target(c, root)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			rc, stdout, stderr := c.call(nil, "init", "--slug", "demo", "--repo-dir", dest, "--json")
-			if rc != 2 || stderr != "" { t.Fatalf("unexpected error mode: exit=%d out=%q err=%q", rc, stdout, stderr) }
+			if rc != 2 || stderr != "" {
+				t.Fatalf("unexpected error mode: exit=%d out=%q err=%q", rc, stdout, stderr)
+			}
 			var got result
 			if err := json.Unmarshal(stdout, &got); err != nil || got.Error == nil || got.Error.Code != tc.wantCode {
 				t.Fatalf("expected %s: exit=%d out=%q parse=%v", tc.wantCode, rc, stdout, err)
@@ -116,7 +128,9 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 			}
 			if tc.name == "existing file" || tc.name == "existing directory" {
 				keep := dest
-				if tc.name == "existing directory" { keep = filepath.Join(dest, "untouched.txt") }
+				if tc.name == "existing directory" {
+					keep = filepath.Join(dest, "untouched.txt")
+				}
 				if b, err := os.ReadFile(keep); err != nil || string(b) != "Keep me" {
 					t.Fatalf("existing target was overwritten: %q: %v", b, err)
 				}
@@ -128,7 +142,9 @@ func TestCLIContractInitExplicitRepoDirRejectsExistingAndUnsafeTargets(t *testin
 func TestCLIContractInitExplicitRepoDirCannotRebindExistingProject(t *testing.T) {
 	c := fixture(t)
 	parent := filepath.Join(filepath.Dir(c.Source), "stores")
-	if err := os.Mkdir(parent, 0700); err != nil { t.Fatal(err) }
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
 	first := filepath.Join(parent, "first.git")
 	second := filepath.Join(parent, "second.git")
 	c.mustCall(t, nil, "init", "--slug", "demo", "--repo-dir", first, "--json")
