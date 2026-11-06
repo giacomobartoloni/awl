@@ -5,265 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 	"unicode/utf8"
 )
 
-func appDataHome() (string, error) {
-	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
-		if !filepath.IsAbs(v) {
-			return "", fail("INVALID_DATA_HOME", "XDG_DATA_HOME must be absolute")
-		}
-		return v, nil
-	}
-	home, e := os.UserHomeDir()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(home, ".local", "share"), nil
-}
-func noSymlinkDir(path string) error {
-	st, e := os.Lstat(path)
-	if e == nil {
-		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
-			return fail("UNSAFE_PATH", "path is not a real directory: "+path)
-		}
-		return nil
-	}
-	if !os.IsNotExist(e) {
-		return e
-	}
-	return os.Mkdir(path, 0700)
-}
-func atomicNewFile(path string, content []byte) error {
-	// Write and sync a private file first, then publish it without replacing a
-	// preexisting user file. This is not a demonstrated power-loss guarantee.
-	dir := filepath.Dir(path)
-	temp, e := os.CreateTemp(dir, ".awl-pending-*")
-	if e != nil {
-		return e
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if e = temp.Chmod(0600); e != nil {
-		temp.Close()
-		return e
-	}
-	if _, e = temp.Write(content); e == nil {
-		e = temp.Sync()
-	}
-	if closeErr := temp.Close(); e == nil {
-		e = closeErr
-	}
-	if e != nil {
-		return e
-	}
-	return os.Link(tempPath, path)
-}
-func validateOptionalLocalLink(root, common string) error {
-	link := filepath.Join(root, ".awl", "local.yaml")
-	st, e := os.Lstat(link)
-	if os.IsNotExist(e) {
-		return nil
-	}
-	if e != nil {
-		return e
-	}
-	if st.Mode()&os.ModeSymlink == 0 {
-		return fail("LOCAL_CONFIG_CONFLICT", "worktree-local local.yaml must be an optional symlink, not an independent file")
-	}
-	target, e := os.Readlink(link)
-	if e != nil {
-		return e
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(link), target)
-	}
-	expected := filepath.Join(common, "awl", "local.yaml")
-	if filepath.Clean(target) != filepath.Clean(expected) {
-		return fail("LOCAL_CONFIG_CONFLICT", "local.yaml symlink must target canonical Git common-dir configuration")
-	}
-	tracked, e := gitSource(root, "ls-files", "--cached", "--", ".awl/local.yaml")
-	if e != nil {
-		return e
-	}
-	if len(tracked) > 0 {
-		return fail("LOCAL_CONFIG_CONFLICT", "worktree local.yaml is tracked by source Git")
-	}
-	if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
-		return fail("LOCAL_CONFIG_NOT_IGNORED", "optional .awl/local.yaml symlink must be excluded from source Git")
-	}
-	return nil
-}
-
-func initialize(slug, remote, explicit string) (project, error) {
-	root, common, e := source()
-	if e != nil {
-		return project{}, e
-	}
-	// Malformed first-use arguments must not create even the .awl directory.
-	firstProjectFile := filepath.Join(root, ".awl", "project.yaml")
-	if _, e = os.Lstat(firstProjectFile); os.IsNotExist(e) && (!slugPattern.MatchString(slug) || remote == "") {
-		return project{}, fail("INIT_INPUT_REQUIRED", "new project needs --slug and --remote")
-	}
-	if explicit != "" && slug != "" && explicit != slug {
-		return project{}, fail("PROJECT_CONFLICT", "explicit project does not match init slug")
-	}
-	if e = noSymlinkDir(filepath.Join(common, "awl")); e != nil {
-		return project{}, e
-	}
-	unlock, e := flock(filepath.Join(common, "awl", "init.lock"))
-	if e != nil {
-		return project{}, e
-	}
-	defer unlock()
-	configDir := filepath.Join(root, ".awl")
-	if e = noSymlinkDir(configDir); e != nil {
-		return project{}, e
-	}
-	projPath := filepath.Join(configDir, "project.yaml")
-	if e = validateOptionalLocalLink(root, common); e != nil {
-		return project{}, e
-	}
-	if st, check := os.Lstat(projPath); check == nil && st.Mode()&os.ModeSymlink != 0 {
-		return project{}, fail("UNSAFE_PATH", "source project configuration must not be a symlink")
-	}
-	if _, e = os.Stat(projPath); e == nil {
-		existingSlug, existingRemote, e := parseShared(projPath)
-		if e != nil {
-			return project{}, e
-		}
-		if slug != "" && slug != existingSlug {
-			return project{}, fail("PROJECT_CONFLICT", "init slug differs from existing configuration")
-		}
-		if remote != "" && remote != existingRemote {
-			return project{}, fail("PROJECT_CONFLICT", "init remote differs from existing configuration")
-		}
-		slug, remote = existingSlug, existingRemote
-	} else if !os.IsNotExist(e) {
-		return project{}, e
-	} else if !slugPattern.MatchString(slug) || remote == "" {
-		return project{}, fail("INIT_INPUT_REQUIRED", "new project needs --slug and --remote")
-	}
-	if explicit != "" && explicit != slug {
-		return project{}, fail("PROJECT_CONFLICT", "--project disagrees with source project")
-	}
-	if strings.ContainsAny(remote, "\n\r#*\\") || strings.Contains(remote, "://") && strings.Contains(strings.SplitN(strings.SplitN(remote, "://", 2)[1], "/", 2)[0], "@") {
-		return project{}, fail("INVALID_CONFIG", "invalid or credential-bearing remote")
-	}
-	user, email, e := identity(root)
-	if e != nil {
-		return project{}, e
-	}
-	localPath := filepath.Join(common, "awl", "local.yaml")
-	if _, e = os.Stat(localPath); e == nil {
-		bind, e := parseLocal(localPath)
-		if e != nil {
-			return project{}, e
-		}
-		if bind.Slug != slug || bind.Remote != remote {
-			return project{}, fail("PROJECT_CONFLICT", "canonical project binding conflicts with source configuration")
-		}
-		if _, e = os.Stat(bind.LocalRepo); e != nil {
-			return project{}, fail("MANAGED_REPO_MISSING", "configured managed repository is missing")
-		}
-		p := project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: bind.LocalRepo, UserName: user, UserEmail: email}
-		if _, e = headCommit(p); e != nil {
-			return project{}, e
-		}
-		return p, nil
-	} else if !os.IsNotExist(e) {
-		return project{}, e
-	}
-	data, e := appDataHome()
-	if e != nil {
-		return project{}, e
-	}
-	base := filepath.Join(data, "awl", "repos")
-	if e = os.MkdirAll(base, 0700); e != nil {
-		return project{}, e
-	}
-	nonce, e := randomID()
-	if e != nil {
-		return project{}, e
-	}
-	dest := filepath.Join(base, slug+"-"+nonce)
-	if _, e = gitText("", nil, nil, "init", "--bare", dest); e != nil {
-		return project{}, e
-	}
-	p := project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: dest, UserName: user, UserEmail: email}
-	// An empty initial tree is a bootstrap state, not an audited mutation request.
-	tree, e := gitText(dest, nil, []byte{}, "hash-object", "-w", "-t", "tree", "--stdin")
-	if e != nil {
-		return project{}, e
-	}
-	initial, e := gitText(dest, p.commitEnv(), []byte("awl bootstrap\n"), "commit-tree", tree)
-	if e != nil {
-		return project{}, e
-	}
-	if _, e = gitText(dest, nil, nil, "update-ref", managedRef, initial); e != nil {
-		return project{}, e
-	}
-	if _, e = os.Lstat(projPath); os.IsNotExist(e) {
-		body := fmt.Sprintf("schema: 1\nproject:\n  slug: %s\nstorage:\n  remote: %s\n", slug, remote)
-		if e = atomicNewFile(projPath, []byte(body)); e != nil {
-			return project{}, e
-		}
-	} else if e != nil {
-		return project{}, e
-	}
-	local := fmt.Sprintf("schema: 1\nbinding:\n  slug: %s\n  remote: %s\nstorage:\n  localRepo: %s\n", slug, remote, dest)
-	if e = atomicNewFile(localPath, []byte(local)); e != nil {
-		return project{}, e
-	}
-	return p, nil
-}
-func resolve(explicit string) (project, error) {
-	root, common, e := source()
-	if e != nil {
-		return project{}, e
-	}
-	projectFile := filepath.Join(root, ".awl", "project.yaml")
-	if st, e := os.Lstat(projectFile); e == nil && st.Mode()&os.ModeSymlink != 0 {
-		return project{}, fail("UNSAFE_PATH", "source project configuration cannot be a symlink")
-	}
-	slug, remote, e := parseShared(projectFile)
-	if e != nil {
-		if os.IsNotExist(e) {
-			return project{}, fail("PROJECT_NOT_INITIALIZED", "missing .awl/project.yaml; run awl init")
-		}
-		return project{}, e
-	}
-	if explicit != "" && explicit != slug {
-		return project{}, fail("PROJECT_NOT_RESOLVED", "out-of-repository --project selection is not part of this spike")
-	}
-	bind, e := parseLocal(filepath.Join(common, "awl", "local.yaml"))
-	if e != nil {
-		if os.IsNotExist(e) {
-			return project{}, fail("PROJECT_NOT_INITIALIZED", "missing canonical local binding; run awl init")
-		}
-		return project{}, e
-	}
-	if bind.Slug != slug || bind.Remote != remote {
-		return project{}, fail("PROJECT_CONFLICT", "source configuration differs from initialized canonical binding")
-	}
-	if e = validateOptionalLocalLink(root, common); e != nil {
-		return project{}, e
-	}
-	st, e := os.Lstat(bind.LocalRepo)
-	if e != nil {
-		return project{}, fail("MANAGED_REPO_MISSING", "managed repository unavailable")
-	}
-	if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
-		return project{}, fail("UNSAFE_PATH", "managed repository is not an ordinary directory")
-	}
-	name, email, e := identity(root)
-	if e != nil {
-		return project{}, e
-	}
-	return project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: bind.LocalRepo, UserName: name, UserEmail: email}, nil
-}
 func (p project) commitEnv() []string {
 	return []string{"GIT_AUTHOR_NAME=" + p.UserName, "GIT_AUTHOR_EMAIL=" + p.UserEmail, "GIT_COMMITTER_NAME=" + p.UserName, "GIT_COMMITTER_EMAIL=" + p.UserEmail}
 }
@@ -311,6 +57,12 @@ func readEntry(p project, head, path string) (entry, error) {
 }
 func (c *cli) writeRequest(req request) int {
 	p, e := resolve(c.explicit)
+	if e != nil {
+		return c.emitError(e)
+	}
+	// Only mutations require Git attribution. Reads and remote configuration
+	// remain usable without a current author identity.
+	p.UserName, p.UserEmail, e = identity(p.Root)
 	if e != nil {
 		return c.emitError(e)
 	}
@@ -596,4 +348,70 @@ func findAudit(p project, head, id string) (audit, string, error) {
 		}
 	}
 	return found, foundSHA, nil
+}
+
+func git(dir string, env []string, input []byte, args ...string) ([]byte, error) {
+	opts := []string{}
+	if dir != "" {
+		opts = append(opts, "--git-dir="+dir)
+	}
+	opts = append(opts, args...)
+	cmd := exec.Command("git", opts...)
+	cmd.Env = gitEnv(env)
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	b, e := cmd.Output()
+	if e != nil {
+		return nil, fmt.Errorf("git %q failed: %w: %s", args, e, strings.TrimSpace(stderr.String()))
+	}
+	return b, nil
+}
+func gitEnv(extra []string) []string {
+	ret := []string{}
+	for _, x := range os.Environ() {
+		k, _, _ := strings.Cut(x, "=")
+		if strings.HasPrefix(k, "GIT_") {
+			continue
+		}
+		ret = append(ret, x)
+	}
+	return append(ret, extra...)
+}
+func gitText(dir string, env []string, input []byte, args ...string) (string, error) {
+	b, e := git(dir, env, input, args...)
+	return strings.TrimSuffix(string(b), "\n"), e
+}
+func gitSource(root string, args ...string) ([]byte, error) {
+	a := append([]string{"-C", root}, args...)
+	s, e := gitText("", nil, nil, a...)
+	return []byte(s), e
+}
+func source() (string, string, error) {
+	cwd, e := os.Getwd()
+	if e != nil {
+		return "", "", e
+	}
+	root, e := gitSource(cwd, "rev-parse", "--show-toplevel")
+	if e != nil {
+		return "", "", fail("PROJECT_NOT_RESOLVED", "not inside a source Git worktree")
+	}
+	common, e := gitSource(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if e != nil {
+		return "", "", fail("PROJECT_NOT_RESOLVED", "cannot determine Git common directory")
+	}
+	return string(root), string(common), nil
+}
+func identity(root string) (string, string, error) {
+	name, e := gitSource(root, "config", "user.name")
+	if e != nil || len(name) == 0 {
+		return "", "", fail("IDENTITY_UNAVAILABLE", "configure source Git user.name")
+	}
+	email, e := gitSource(root, "config", "user.email")
+	if e != nil || len(email) == 0 {
+		return "", "", fail("IDENTITY_UNAVAILABLE", "configure source Git user.email")
+	}
+	return string(name), string(email), nil
 }
