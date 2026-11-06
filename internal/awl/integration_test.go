@@ -255,9 +255,9 @@ func TestFrontmatterBOMAndMalformedFenceAreProtected(t *testing.T) {
 
 func TestRejectedInitAndDuplicateOperationIDsHaveNoSideEffects(t *testing.T) {
 	c := fixture(t)
-	rc, _, _ := c.call(nil, "init", "--slug", "demo", "--json")
+	rc, _, _ := c.call(nil, "init", "--json")
 	if rc == 0 {
-		t.Fatal("missing remote accepted")
+		t.Fatal("missing project slug accepted")
 	}
 	if _, e := os.Stat(filepath.Join(c.Source, ".awl")); !os.IsNotExist(e) {
 		t.Fatalf("invalid init created source .awl: %v", e)
@@ -328,5 +328,188 @@ func TestOptionalLocalSymlinkIsValidOnlyWhenCanonicalAndIgnored(t *testing.T) {
 	rc, out, _ = c.call(nil, "read", "Docs/one.md", "--json")
 	if rc == 0 || !bytes.Contains(out, []byte("LOCAL_CONFIG_CONFLICT")) {
 		t.Fatalf("unexpected symlink accepted: %d %s", rc, out)
+	}
+}
+
+func TestInitWithoutRemoteAndAddRemoteLater(t *testing.T) {
+	c := fixture(t)
+	initialized := c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+	if initialized.Project != "demo" {
+		t.Fatalf("unexpected project: %+v", initialized)
+	}
+	sharedPath := filepath.Join(c.Source, ".awl", "project.yaml")
+	localPath := filepath.Join(c.Source, ".git", "awl", "local.yaml")
+	if slug, remote, err := parseShared(sharedPath); err != nil || slug != "demo" || remote != "" {
+		t.Fatalf("local-only shared project: %q %q %v", slug, remote, err)
+	}
+	original := []byte("---\r\nstatus: active\r\n---\r\nOriginal Markdown\r\n")
+	created := c.mustCall(t, original, "create", "Activities/test.md", "--request-id", "local-only-create", "--json")
+	before := c.git(t, "rev-list", "--all", "--count")
+	added := c.mustCall(t, nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+	if added.Status != "remote_added" || added.Project != "demo" {
+		t.Fatalf("remote add result: %+v", added)
+	}
+	for _, path := range []string{sharedPath, localPath} {
+		var remote string
+		var err error
+		if path == sharedPath {
+			_, remote, err = parseShared(path)
+		} else {
+			var bind binding
+			bind, err = parseLocal(path)
+			remote = bind.Remote
+		}
+		if err != nil || remote != "git@example.invalid:demo.git" {
+			t.Fatalf("remote config %s: %q %v", path, remote, err)
+		}
+	}
+	again := c.mustCall(t, nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+	if again.Status != "remote_unchanged" {
+		t.Fatalf("same remote must be idempotent: %+v", again)
+	}
+	initAgain := c.mustCall(t, nil, "init", "--json")
+	if initAgain.Status != "initialized" {
+		t.Fatalf("init repeated after remote add: %+v", initAgain)
+	}
+	rc, out, _ := c.call(nil, "remote", "add", "git@example.invalid:other.git", "--json")
+	if rc == 0 || !bytes.Contains(out, []byte("REMOTE_ALREADY_CONFIGURED")) {
+		t.Fatalf("different remote was accepted: %d %s", rc, out)
+	}
+	if got := c.read(t, "Activities/test.md"); !bytes.Equal(got, original) {
+		t.Fatalf("remote config changed documents: %q", got)
+	}
+	if before != c.git(t, "rev-list", "--all", "--count") || created.Commit == "" {
+		t.Fatal("remote add unexpectedly committed in source repository")
+	}
+	bind, err := parseLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "--git-dir="+bind.LocalRepo, "rev-parse", managedRef)
+	head, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(head)) != created.Commit {
+		t.Fatalf("remote add unexpectedly advanced managed Git head: %s %v", head, err)
+	}
+}
+
+func TestRemoteAddRejectsInvalidOrUninitialized(t *testing.T) {
+	c := fixture(t)
+	rc, out, _ := c.call(nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+	if rc == 0 || !bytes.Contains(out, []byte("PROJECT_NOT_INITIALIZED")) {
+		t.Fatalf("remote add without init: %d %s", rc, out)
+	}
+	c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+	shared := filepath.Join(c.Source, ".awl", "project.yaml")
+	original, err := os.ReadFile(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"-upload-pack=evil", "https://user:token@host.test/repo", "https://host.test/a#frag"} {
+		rc, out, _ = c.call(nil, "remote", "add", invalid, "--json")
+		if rc == 0 || !bytes.Contains(out, []byte("INVALID_REMOTE")) {
+			t.Fatalf("unsafe remote accepted %q: %d %s", invalid, rc, out)
+		}
+	}
+	now, err := os.ReadFile(shared)
+	if err != nil || !bytes.Equal(now, original) {
+		t.Fatalf("invalid remote changed config: %q %v", now, err)
+	}
+}
+
+func TestRemoteAddRepairsPartialConfigAndPreservesComments(t *testing.T) {
+	for _, advanced := range []string{"shared", "local"} {
+		t.Run(advanced, func(t *testing.T) {
+			c := fixture(t)
+			c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+			shared := filepath.Join(c.Source, ".awl", "project.yaml")
+			local := filepath.Join(c.Source, ".git", "awl", "local.yaml")
+			// Simulate an interrupted two-file update using the same non-destructive injection step.
+			target, section := shared, "storage"
+			if advanced == "local" {
+				target, section = local, "binding"
+			}
+			original, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withComment := bytes.ReplaceAll(original, []byte("\n"), []byte("\r\n"))
+			withComment = append(withComment, []byte("# existing user comment\r\n")...)
+			after, err := withRemote(withComment, section, "git@example.invalid:demo.git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, after, 0600); err != nil {
+				t.Fatal(err)
+			}
+			r := c.mustCall(t, nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+			if r.Status != "remote_added" {
+				t.Fatalf("repair: %+v", r)
+			}
+			r = c.mustCall(t, nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+			if r.Status != "remote_unchanged" {
+				t.Fatalf("second repair: %+v", r)
+			}
+			now, err := os.ReadFile(target)
+			if err != nil || !bytes.Contains(now, []byte("# existing user comment\r\n")) || !bytes.Contains(now, []byte("\r\n")) {
+				t.Fatalf("updated config reformatted user bytes: %q %v", now, err)
+			}
+			if _, err := parseLocal(local); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := parseShared(shared); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestConcurrentIdenticalRemoteAdd(t *testing.T) {
+	c := fixture(t)
+	c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+	type outcome struct {
+		code   int
+		output []byte
+		stderr string
+	}
+	resultCh := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			code, out, err := c.call(nil, "remote", "add", "git@example.invalid:demo.git", "--json")
+			resultCh <- outcome{code, out, err}
+		}()
+	}
+	statuses := map[string]int{}
+	for range 2 {
+		r := <-resultCh
+		if r.code != 0 {
+			t.Fatalf("racing remote add: %d %s %s", r.code, r.output, r.stderr)
+		}
+		var parsed result
+		if e := json.Unmarshal(r.output, &parsed); e != nil {
+			t.Fatal(e)
+		}
+		statuses[parsed.Status]++
+	}
+	if statuses["remote_added"] != 1 || statuses["remote_unchanged"] != 1 {
+		t.Fatalf("race outcomes: %+v", statuses)
+	}
+}
+
+func TestReadAndRemoteAddDoNotRequireWriterIdentity(t *testing.T) {
+	c := fixture(t)
+	c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+	c.mustCall(t, []byte("Persisted markdown\n"), "create", "Docs/one.md", "--json")
+	c.git(t, "config", "--local", "--unset", "user.name")
+	c.git(t, "config", "--local", "--unset", "user.email")
+	if got := c.read(t, "Docs/one.md"); string(got) != "Persisted markdown\n" {
+		t.Fatalf("identity-free read returned %q", got)
+	}
+	added := c.mustCall(t, nil, "remote", "add", "ssh://git@example.invalid/worklog.git", "--json")
+	if added.Status != "remote_added" {
+		t.Fatalf("identity-free remote config: %+v", added)
+	}
+	code, out, _ := c.call([]byte("New content"), "create", "Docs/new.md", "--json")
+	if code == 0 || !bytes.Contains(out, []byte("IDENTITY_UNAVAILABLE")) {
+		t.Fatalf("write without attribution succeeded: %d %s", code, out)
 	}
 }
