@@ -98,10 +98,10 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		args = args[2:]
 	}
 	if len(args) == 0 {
-		return c.emitError(fail("USAGE", "expected init, remote, read, create, edit, or apply"))
+		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, or apply"))
 	}
 	name, args := args[0], args[1:]
-	if name == "read" || name == "create" || name == "edit" || name == "remote" {
+	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "remote" {
 		args = pathFlagsFirst(args)
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -133,6 +133,41 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 			status = "remote_unchanged"
 		}
 		return c.emit(result{Status: status, Project: p.Slug})
+	case "ls":
+		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
+		if e := fs.Parse(args); e != nil || fs.NArg() > 1 {
+			return c.emitError(fail("USAGE", "ls accepts an optional project-relative directory and --json"))
+		}
+		prefix, e := safeListPrefix(fs.Arg(0))
+		if e != nil {
+			return c.emitError(e)
+		}
+		p, e := resolve(c.explicit)
+		if e != nil {
+			return c.emitError(e)
+		}
+		revision, e := headCommit(p)
+		if e != nil {
+			return c.emitError(e)
+		}
+		paths, e := listDocuments(p, revision, prefix)
+		if e != nil {
+			return c.emitError(e)
+		}
+		if c.jsonOut {
+			return c.encode(struct {
+				Status   string   `json:"status"`
+				Project  string   `json:"project"`
+				Revision string   `json:"revision"`
+				Paths    []string `json:"paths"`
+			}{"ok", p.Slug, revision, paths})
+		}
+		for _, path := range paths {
+			if _, e := fmt.Fprintln(c.stdout, path); e != nil {
+				return c.emitError(e)
+			}
+		}
+		return 0
 	case "read":
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		if e := fs.Parse(args); e != nil || fs.NArg() != 1 {
@@ -216,7 +251,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		return c.writeRequest(req)
 	default:
-		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, read, create, edit, apply"))
+		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, ls, read, create, edit, apply"))
 	}
 }
 
