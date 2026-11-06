@@ -119,3 +119,36 @@ The Go code intentionally does **not** acquire a `SyncBackend`/`Transport` inter
 This increment does **not** pass a caller-owned cancellation context through the entire CLI/request stack; the compatibility wrapper uses a fresh per-command timeout. Process-kill/power-loss durability remains unverified. The new test observes an ambiguous **subprocess** exit after Git succeeds; it is not a real process-crash test. The code still needs deterministic incompatible same-target CAS fault injection, larger-history audit lookup evaluation, bounded whole-request duration and secure remote Git credential handling before production. `rsync`, `rclone`, remote sync and alternate authoritative backends remain unimplemented.
 
 **Evidence status:** the workflow run named above verifies the actual code on that commit. No standalone local container execution of the full Go module was performed in this increment; later documentation-only commits are not themselves evidence of new runtime behavior. The experimental PR remains draft and `main` remains unchanged unless separately merged.
+
+
+## 8. Deterministic concurrent same-document conflict verification (2026-11-06)
+
+**Scope:** acceptance-driven testing of the existing local Git request publisher against the owner-selected whole-request concurrency abort contract; no change to production Go publication logic and no architectural package/interface changes.
+
+### Real two-process scenario
+
+Added `internal/awl/concurrency_test.go` with `TestConcurrentIncompatibleCompositeAbortsWithoutCommit`. The test builds the real CLI executable and initializes one temporary local managed Git repository. Two separate awl processes each prepare a different **ordered composite** against the same document revision: a conflicting body edit to `Specs/shared.md`, followed by creation of a uniquely named sidecar Markdown document.
+
+A **test-only POSIX Git wrapper** (not a production awl subprocess mechanism) blocks both processes immediately before `git update-ref`, after they have prepared their own candidate commits against the same old ref. Once both reach the barrier, the wrapper releases one guarded Git update and ensures it finishes before the other update is attempted. This forces a CAS loss without relying on scheduler timing.
+
+The test asserts all of the following:
+
+- Exactly one composite is **accepted** with both members applied, and exactly one returns the structured `CONCURRENT_REQUEST_CONFLICT` diagnostic.
+- The managed Git head advances exactly **one reachable commit** after the two requests, and the accepted response names that commit.
+- `findAudit` finds the winning request's audit and **no published audit** for the rejected request.
+- The shared Markdown file contains the winner's exact body and unchanged YAML frontmatter; the winner's sidecar exists and the rejected composite's sidecar does **not** exist.
+- No network, remote provider, QMD, daemon or automatic background work is involved.
+
+The loser may have created a **speculative unreachable Git object** before its guarded ref update failed. This test proves **no reachable/published commit** for the rejected request; it does not resolve the previously documented question of whether zero unreachable objects is required.
+
+### Verification
+
+- [Run 42258478520](https://github.com/giacomobartoloni/awl/actions/runs/42258478520): full GitHub Actions suite with gofmt, `go vet ./...`, and `go test -race -count=1 ./...` **passed**.
+- [Run 42258735865](https://github.com/giacomobartoloni/awl/actions/runs/42258735865): full Go suite passed, but the newly added repeat-test workflow command failed **before executing the repeat test** because of a malformed shell quote. This was a CI command-generation issue, not a Go test failure.
+- [Run 42258976668](https://github.com/giacomobartoloni/awl/actions/runs/42258976668), commit `7605fbf4c134c9ce3f6d8daf6a53df04282994a6`: **all workflow steps succeeded** on Linux/amd64, Go 1.23.12, Git 2.56.0. This includes the complete race-enabled suite and **eight additional consecutive executions** of the targeted test using `go test -race -count=8 -run TestConcurrentIncompatibleCompositeAbortsWithoutCommit ./internal/awl`.
+
+### Boundaries not covered
+
+The deterministic wrapper establishes one precise same-base, incompatible-edit collision and validates the production Go CAS/ref logic against it. It does **not** prove safety for all interleavings, real process termination, power-loss durability, audit history compaction, remote reconciliation, or cross-platform behavior. In particular, an actual transient Git ref lock may return a retryable `GIT_PUBLICATION_FAILED` if the head has not yet advanced at observation time; do not conflate that operational error with proof of conflict. Broader model-/fault-injection tests remain follow-up work.
+
+**Implementation/merge status:** experimental PR #7; test and workflow changes are on its existing branch only. This is not an ADR, an approved release or an implementation of Git/rsync/rclone sync.
