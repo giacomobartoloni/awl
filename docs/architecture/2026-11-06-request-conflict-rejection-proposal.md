@@ -173,3 +173,31 @@ Five sequential full harness runs passed (15 scenario executions). **They do not
 **Next proof gates:** deterministic fault injection before/after commit-object creation and ref publication; durable idempotency lookup after a lost response; platform flush safety; independent writers without/with lock and crash cleanup; real YAML/Markdown patch validation; remote divergence; scale under contention. No benchmarks or power-loss guarantees are claimed.
 
 **Provenance:** Owner discussion on 2026-11-06, GitHub requirements/PRs and the isolated Git CLI probe. This PR modifies documentation, not `awl` product code or an ADR. The mechanism was tested in a standalone harness only.
+
+## 11. Follow-up: deterministic process interruption and remote divergence (2026-11-06)
+
+**Evidence status:** Separate, bounded **Git CLI fixture**, extending the earlier baseline in §10; this is not an `awl` implementation, durability proof, scale benchmark or remote-provider acceptance test. The fixture source and machine-readable results were retained as a downloadable conversation artifact rather than inserted into this documentation PR.
+
+**Environment/fixture:** Git 2.47.3, Python 3.13.5, POSIX host. All cases create independent temporary **bare Git repositories**; two local bare replicas plus a third bare repository simulate the remote. `SIGKILL` terminates a child process at deterministic checkpoints. Request audit is illustrative and stored in commit messages; a linear request-ID/payload-digest history lookup is used **only for the small test fixture**. No real Git host, network transport or coding-agent API was exercised.
+
+| Probe | Observed result |
+| --- | --- |
+| P4 — Kill before creating candidate commit | No new reachable commit or audit; managed head unchanged |
+| P5 — Kill after `commit-tree` but before `update-ref` | Managed head and reachable history unchanged; the candidate **commit object exists but is unreachable** |
+| P6 — Kill after guarded `update-ref` but before response | Commit and audit reachable; retry with same request ID/payload digest identifies prior publication without another commit; same ID with different payload is rejected |
+| P7 — Stale expected-old-ref update from another writer | CAS rejects the stale candidate; head remains at winning commit; the rejected candidate may remain an unreachable object |
+| P8 — Two independently accepted, **disjoint-file** replica commits; second push rejects | Fetch followed by conservative disjoint integration using `git merge-tree --write-tree`, two-parent commit and fast-forward push succeeds; both original audit commits remain ancestors of remote head; status can be confirmed from remote ancestry |
+| P9 — Two independently accepted commits touching the **same** document; second push rejects | Conservative policy declines merge; both local and remote committed versions remain intact; no force push or overwrite |
+
+**Repetition:** five consecutive full extended runs passed all six scenarios: **30/30 scenario executions**. This result covers the six new probes only. Combined with §10, **45/45 executions across nine distinct scenarios** were observed in the two bounded test suites. These counts do not imply statistical reliability at high concurrency.
+
+**Safety interpretation:**
+
+- The owner-selected **no-commit-on-rejected-concurrent-request** guarantee is an observable **published/reachable managed history** guarantee in this candidate. A failed ref CAS or a crash between commit-object creation and publication can leave an **unreachable candidate Git commit object**. A literal prohibition on constructing even unreachable objects requires tighter staging/locking; do not conceal this distinction.
+- A crash **after** the ref advances may have published a successful request even when the caller sees no reply. Verify reachable request ID, submitted payload digest and the final outcome before returning a definitive result or attempting replay. A content digest does not authenticate a caller or guarantee durable storage after power loss.
+- A remote push rejection is **not** a local request rejection. The locally accepted commit and audit remain retained for later reconciliation; conflict reporting must not set local `applied=false`.
+- The remote success in P8 is **local bare-Git transport only**, with disjoint paths and a trivial merge. No general same-file Markdown/YAML merge safety or hosted-remote correctness is established.
+
+**Remaining gates:** power-loss/fdatasync/fsync behavior on supported systems; deterministic publication uncertainty and recovery over real persistence; complete immutable audit/member failure reconstruction; nontrivial request-ID dedup under offline replica divergence; Git remote branch policy and external writers; symlink/path traversal, YAML pointer and exact Markdown byte-preservation cases; high-contention throughput and cleanup/GC after orphans; production implementation tests. Do not select micro-worktrees versus private staging solely on this evidence.
+
+**Verification boundary:** Both suites passed as standalone isolated Git experiments; **no awl product tests or benchmarks** were run, and the PR remains a design draft.
