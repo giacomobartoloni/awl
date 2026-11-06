@@ -584,3 +584,39 @@ func TestGitContextCancellationAndBoundedCapture(t *testing.T) {
 		t.Fatalf("unexpected bounded output state: overflow=%t contents=%q", out.overflow, out.String())
 	}
 }
+
+func TestGitRefPublishedDespiteFailedSubprocessResponse(t *testing.T) {
+	c := fixture(t)
+	c.mustCall(t, nil, "init", "--slug", "demo", "--json")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolDir := t.TempDir()
+	// This test-only wrapper lets the real Git ref update succeed but then
+	// reports a nonzero exit code, modeling a lost/ambiguous acknowledgement.
+	wrapper := "#!/bin/sh\n" +
+		"if [ \"$2\" = \"update-ref\" ]; then\n" +
+		"  \"$AWL_TEST_REAL_GIT\" \"$@\" || exit $?\n" +
+		"  exit 73\n" +
+		"fi\n" +
+		"exec \"$AWL_TEST_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(toolDir, "git"), []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWL_TEST_REAL_GIT", realGit)
+	t.Setenv("PATH", toolDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	content := []byte("# accepted even with lost Git response\n")
+	first := c.mustCall(t, content, "create", "Specs/confirmed.md", "--request-id", "lost-git-response", "--json")
+	if first.Status != "applied" || first.Commit == "" || first.Replayed {
+		t.Fatalf("published commit should be confirmed by re-reading the Git ref: %+v", first)
+	}
+	retry := c.mustCall(t, content, "create", "Specs/confirmed.md", "--request-id", "lost-git-response", "--json")
+	if !retry.Replayed || retry.Commit != first.Commit {
+		t.Fatalf("same request must replay the published audited commit: first=%+v retry=%+v", first, retry)
+	}
+	if got := c.read(t, "Specs/confirmed.md"); !bytes.Equal(got, content) {
+		t.Fatalf("confirmed commit did not preserve Markdown: %q", got)
+	}
+}
