@@ -144,3 +144,52 @@ A one-way satellite that is an archival mirror should not be confused with a wri
 - Which provider transports can meet a multiwriter guarantee. If no guarded write/ack is possible, **declare single-writer/export-only constraints** instead of pretending full interchangeable sync.
 
 **Recommended YAGNI development order:** (1) finish local-only `init` / Git binding configuration and local writer safety; (2) implement **one concrete Git-authority sync** end to end with verified remote state; (3) prototype **one** bounded satellite export with rsync or rclone on a disposable target and evaluate actual capabilities; (4) introduce only the interfaces, data records and configuration fields the second implementation has shown to be necessary; (5) revisit provider-neutral authority with an ADR and explicit owner approval if demanded by real projects. No simultaneous Git/rsync/rclone engine implementation is proposed.
+
+
+## 10. Extensibility boundary: backend authority vs transport (refinement)
+
+**Status: design proposal, not an approved replacement of the Git hub or an implemented Go abstraction.** The owner wants future choices of backend and sync mechanism, including Git, rsync and rclone. Preserving the possibility requires a **clear architectural seam** today, not implementing all modes at once.
+
+### Orthogonal decisions
+
+| Responsibility | Current choice | Future options | Contract that cannot be waived |
+| --- | --- | --- | --- |
+| Local document/audit store | Managed local Git | Alternative store only under separate decision | Durable complete request outcome, stable snapshot, safe concurrency and recovery |
+| Authoritative remote | Git hub | A provider with verified conditional updates and retained B/L/R checkpoints | One authority, observed remote version, guarded publication and verified acknowledgement |
+| Transfer/export | Native Git protocol | rsync, rclone copy, rclone sync (restricted), provider API | Scoped content snapshot, explicit direction, deletion policy, independently verified transfer |
+| Content reconciliation | Git history and controlled request replay | File-granular Base/Local/Remote; CRDT only if justified | Preserve edits/provenance, never silently last-writer-wins |
+| Search | Derived index (QMD candidate) | Other derived engines | Never determines local/remote publication or source authority |
+
+**Git, rsync and rclone are not three implementations of the same operation.** Git exchanges a revision graph. Rsync/rclone primarily move file bytes; their copy/mirror semantics cannot claim remote conditional-write, causal ancestry, Markdown-safe merge or request audit. In particular, rsync with delete flags and rclone sync may delete remote-only files; rclone bisync has separate state and recovery hazards.
+
+### Minimal extension points to preserve
+
+1. **Local writer (existing, concrete Go code):** accepts document intents and returns an acknowledged immutable local Git commit plus document tree; no network calls or rsync/rclone dependency. No new storage interface is needed now.
+2. **Coordinator (first concrete Git sync):** explicit invocation owns remote observation, conflict/reconcile policy, bounded attempts, cancellation and independent verification of acknowledgement; does not hold the local publication lock across network calls.
+3. **Git authority implementation:** fetch, validate ref/ancestry, reconcile, non-force push and verify. Git commit/refs are private implementation identifiers, not a universal backend revision type.
+4. **Snapshot export implementation (later):** project a **verified authoritative hub** document tree into an isolated allowlisted directory, run a selected transport and verify destination receipt/manifest. No direct modification of managed Git. Content export is not Git history/audit export. No implied atomic multi-file visibility.
+5. **Alternative authority (separately approved research path, PR #3):** preserve an actual Base/Local/Remote checkpoint plus provider IDs/versions, tombstones, rename/deletion evidence and controlled import. Require verified conditional writes or explicitly restrict that provider to single-writer mode. A best-effort file copy is not a multiwriter authority.
+6. **Go design:** do not add an exported SyncBackend/Transport/StorageBackend interface or plugin registry yet. When the *second real implementation* is built, extract the smallest interface **in the calling package**, with capabilities and errors that cannot hide differences between Git authority and snapshot export. Favor two concrete types/functions over an artificial shared Sync method.
+
+### Capability-based admission
+
+| Capability | Git authority | rsync/rclone satellite | Future file/object authority |
+| --- | --- | --- | --- |
+| Version and acknowledgement | Git ref + ancestry + confirmed observation | Manifest/checkpoint per export; exact guarantee requires testing | Provider token/object identity and verified receipt |
+| Guarded multiwriter publish | Non-force ref update + recheck | **Not provided by file transfer alone** | Must demonstrate CAS/conditional update or restrict to one writer |
+| Delete and rename | Git history, explicit reconcile | Default no-delete; opt-in mirror with preview and deletion budget | Tombstones, full listing, guarded changes and origin tracing |
+| Multi-file publication | One Git ref publishes a tree | **Partial remote visibility possible** | May be per-file partial unless provider guarantees atomicity |
+| Interrupted attempt | Read remote ref before retry | Reverify files/manifest and repair staging | Reobserve provider state; never blind side-effect replay |
+| External edits/import | Reviewed Git reconciliation | Not enabled in first one-way export | Staged B/L/R merge and auditable import required |
+
+**Fail-closed rule:** unsupported modes report an explicit capability error rather than downgrading to overwrite/force-push/deletion. In the first implementation, the configured Git URL (including experimental local-only init followed by remote add) is not an arbitrary rsync/rclone target, and the current minimal YAML schema stays unchanged. Switching an existing authoritative backend is a **migration**, not a configuration flip.
+
+### Incremental verification before adding code
+
+- **EXT-01:** Git fetch/push remote divergence, lost response, retry and unchanged local acceptance.
+- **EXT-02:** rsync one-way export of a verified hub snapshot to a disposable target, interruption/retry, no deletion by default.
+- **EXT-03:** rclone copy on a disposable target with externally created files, interruption and checkpoint verification; test mirror/delete only after explicit authorization.
+- **EXT-04:** one concrete non-Git authority's real version-token/conditional-write/deletion behavior and preserved Base/Local/Remote, before creating a provider-neutral interface.
+- **EXT-05:** across enabled modes, preserve local request audit, project-relative identity, bytes, index freshness and truthful partial/unknown states.
+
+This amendment does **not** approve a multiple-authority topology, provider plug-in API, adapter registry, rclone bisync, new project schema or production sync execution.
