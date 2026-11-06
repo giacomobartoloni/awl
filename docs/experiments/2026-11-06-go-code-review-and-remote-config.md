@@ -152,3 +152,33 @@ The loser may have created a **speculative unreachable Git object** before its g
 The deterministic wrapper establishes one precise same-base, incompatible-edit collision and validates the production Go CAS/ref logic against it. It does **not** prove safety for all interleavings, real process termination, power-loss durability, audit history compaction, remote reconciliation, or cross-platform behavior. In particular, an actual transient Git ref lock may return a retryable `GIT_PUBLICATION_FAILED` if the head has not yet advanced at observation time; do not conflate that operational error with proof of conflict. Broader model-/fault-injection tests remain follow-up work.
 
 **Implementation/merge status:** experimental PR #7; test and workflow changes are on its existing branch only. This is not an ADR, an approved release or an implementation of Git/rsync/rclone sync.
+
+
+## 9. Real CLI process termination at the Git publication boundary (2026-11-06)
+
+**Scope:** adversarial process-interruption verification of the experimental local Git publisher. No production Go logic, CLI contract, managed store format, module topology, or remote/satellite backend was changed in this increment.
+
+### Controlled SIGKILL fixtures
+
+Added `internal/awl/crash_test.go` and `TestSIGKILLAtGitPublicationBoundary`, which builds and launches the **real Go CLI executable as a separate OS process** and uses a Linux/POSIX **test-only Git wrapper** to deliver `SIGKILL` to that process at two precise points:
+
+1. **Before `git update-ref`:** the wrapper marks the interruption point, kills the CLI, and intentionally does **not** run the guarded ref update. The test checks that the managed head and entire reachable history remain unchanged; no request audit is published and the Markdown document is absent. Resubmission with the *same request ID and bytes* then succeeds exactly once, with a new audited commit.
+2. **After successful `git update-ref) but before the CLI can reply:** the wrapper runs the real guarded Git update and only then kills its CLI parent, without delivering the Git command result to Go. The test checks that the committed Markdown is readable with exact bytes, the matching request audit is present and reachable, and history has exactly one additional commit. Resubmission using the same request ID is a **replay** of that accepted commit, not a second publication.
+
+Both modes assert **no successful CLI response** from the killed process. A test-owned shell wrapper is used only for fault injection; production awl still invokes Git through explicit argv without a shell. The Git child is deliberately terminated or completed by the wrapper as part of the fixture; the test does not claim that arbitrary independent child processes will always stop when the CLI parent dies.
+
+### Verification
+
+- [Run 42261035481](https://github.com/giacomobartoloni/awl/actions/runs/42261035481), code commit `8508c2daaab4017ca1558d1c6afd5f7c5bc8ac3f`: **passed** gofmt, `go vet ./...`, complete `go test -race -count=1 ./...`, and the existing eightfold incompatible-same-document conflict test.
+- [Run 42261280788](https://github.com/giacomobartoloni/awl/actions/runs/42261280788), workflow commit `faa2c823c23942637dcedc197d2ca6d174a2413e`: **passed** the same checks **plus eight consecutive race-enabled executions** of the new `TestSIGKILLAtGitPublicationBoundary`, each covering both interruption points.
+- Environment: GitHub Actions Linux/amd64, Go 1.23.x and Git CLI from the runner. These are actual GitHub CI results, not hypothetical outcomes or direct evidence of other operating systems or filesystems.
+
+### Remaining durability and recovery gates
+
+- **SIGKILL is not power failure.** After a Git ref update becomes visible, process termination alone does not demonstrate that commit objects, reflogs, ref files or parent directories are durable through sudden machine power loss, kernel panic, storage-controller failure or filesystem corruption.
+- A speculative candidate object created before the guarded ref update may remain **unreachable** after pre-publication termination. The guarantee tested is **no reachable/published commit or document**, not zero allocated Git objects.
+- The test's interruption points are coordinated by a child wrapper that kills its parent; it does not test every possible instant during ref-file writes, the survival of Git child processes after an unrelated parent SIGKILL, or concurrent out-of-band Git writers.
+- **Next work gate:** choose a supported Linux/filesystem/durability profile; inspect Git's available `core.fsync` and ref-update durability capabilities for the supported Git version, test recoverable results under actual abrupt termination and injected storage errors, and specify what can be confidently acknowledged versus `PUBLICATION_OUTCOME_UNKNOWN`. Do not promise power-cut safety before evidence exists.
+- Deterministic same-document CAS conflict and Git-ref-lock error classification remain covered by separate tests. Alternate remote authorities, Git remote sync, rsync, rclone and QMD are unchanged.
+
+**Status:** verified **process-kill fixture** in draft PR #7 only. The project remains a modular-monolith Go prototype, not a production-ready durable synchronization engine.
