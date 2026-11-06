@@ -21,7 +21,7 @@
 
 **Proposed implementation direction, not owner-selected mechanism:** stage a request against one immutable Git tree, construct a candidate tree/commit without changing the shared working tree, and publish via one conditional update of the managed project ref. A short cross-process writer lock or bounded compare-and-swap retries may be used if safety tests justify them. A per-request temporary Git branch or micro-worktree remains an **alternative**, not a requirement.
 
-**Decided 2026-11-06:** rejected request-level concurrency conflicts produce **no commit and no durable shared-Git audit record**; the response alone carries rejection details. **Unresolved:** exact public error encoding, bounded retry count, nonconcurrency failed/no-op audit policy, local durability profile, request-id policy, source-Git/worktree bootstrap details, and remote merge guarantees. No implementation, benchmark or crash proof exists.
+**Decided 2026-11-06:** rejected request-level concurrency conflicts produce **no commit and no durable shared-Git audit record**; the response alone carries rejection details. Additionally the owner selected **Go with external Git CLI** for the first implementation increment, and **one audit-only commit** for completed mutating requests whose operations all fail ordinarily or make no changes. **Unresolved:** exact public error encoding and audit schema, request admission rules, bounded retry count, local durability profile, request-id policy, source-Git/worktree bootstrap details and remote merge guarantees. No awl implementation, benchmark or power-loss proof exists.
 
 ## 2. Definitions and publication boundary
 
@@ -118,7 +118,7 @@ Both require head revalidation. Prefer no-checkout only if fidelity, path handli
 
 ## 7. Audit, remote synchronization and safety boundaries
 
-**Audit:** Recent owner discussion supports a compact, versioned audit **in the Git commit message**, avoiding a tracked file for each request. This remains a *design candidate* and no exact schema is approved. **Owner-selected exclusion:** an unresolved **request-level concurrent conflict returns an error and produces NO Git commit whatsoever for that request**, including no audit-only commit. Its failed attempt is consequently **not** durable in shared Git history. This is an explicit, reviewed exception to the older blanket FR-10 all-attempts wording; successfully published composites still audit each member's success/failure. Whether completed all-failed/no-op **nonconcurrency** requests warrant audit-only commits is a separate open question.
+**Audit:** The owner selected compact versioned **operation-level audit in the Git commit message** without tracked audit files per request. A **locally completed mutating request** results in **one audit-bearing Git commit**: content+audit when documents change; **audit-only with an unchanged document tree** when all operations fail ordinarily or the completed request is a no-op. Successfully published composites retain every ordered member's outcome. **Exception:** an unresolved request-level concurrent publication conflict produces **NO Git commit**, including no audit-only commit, and its response is not durable shared-Git audit. Read-only operations, pre-execution malformed requests and transient network retries do not create commits under the initial proposed boundary. The exact schema, retention, request admission and crash recovery are still open.
 
 **Remote Git:** Keep existing local-first + authoritative Git hub topology until separately revised. A locally committed request is never discarded because of a rejected remote push. Remote branch divergence can be surfaced as pending/reconciliation-required; only provably safe integration may advance the remote. Do not force-push, automatically choose a winner for same-document ambiguity, or equate local CAS success with remote acknowledgement. Multiple remote branches or a per-agent remote branch model are possible future evaluations, not selected components of this local conflict contract.
 
@@ -151,7 +151,7 @@ These scenarios are requirements/experiment proposals, **not executed tests**. C
 
 - **Owner-confirmed:** return a fatal request-level concurrent conflict without publishing any staged document changes; the coding agent rereads and resubmits. Retain ordinary partial composite behavior.
 - **Recommended minimum spike:** one authoritative local Git ref, isolated non-checkout staging if feasible, short conditional publication, bounded safe retries, explicit conflict errors; do not build a dynamic persistence strategy interface.
-- **Owner-confirmed:** no commit of any kind for concurrently rejected requests; only the response conveys that rejected attempt. **Open:** audit of completed nonconcurrency all-failed/no-op requests; exact identity/response schema; CAS versus short lock policy; platform durability; proof of safe same-document retries; remote branch policy.
+- **Owner-confirmed:** no commit of any kind for concurrently rejected requests; only the response conveys that rejected attempt. **Also confirmed:** one audit-only commit for completed mutating all-failed/no-op requests, and Go with external Git CLI for the first implementation increment. **Open:** exact identity/response/audit schema; validation/admission boundary; CAS versus short lock policy; platform durability; proof of safe same-document retries; remote branch policy.
 - **Defer:** mandatory micro-worktree per request, general three-way semantic auto-merger, CRDT engine, daemon, database audit authority, provider-neutral local storage, remote per-agent branch fleet and automatic distributed rollback.
 
 ## 10. Preliminary isolated Git CLI probe (2026-11-06)
@@ -228,3 +228,45 @@ Five sequential full harness runs passed (15 scenario executions). **They do not
 - The repository's `core.fsync`/filesystem/platform guarantees were **not** tested under sudden power loss. Synthetic missing-object detection and deterministic process SIGKILL must never be described as proof of power-loss durability.
 
 **Remaining verification gates before implementation approval:** full YAML/Markdown and link-preservation operations on representative real documents; repeated remote pushes with competing writers, hosted-provider branch policies and timeouts; crash/recovery with complete member audit and idempotent response reconstruction; power-loss/fsync behavior on supported operating systems; path case-folding/symlink safety; larger and less cooperative local concurrency; retention/GC for unreachable speculative objects; quantitative comparison with micro-worktrees if a maintenance tradeoff remains. **No awl source code was modified or executed by these experiments.**
+
+## 13. Owner selections: initial runtime and completed no-change audit (2026-11-06)
+
+**Decision status: owner-approved product direction, not implemented.**
+
+### Initial CLI technology
+
+- **Language/runtime:** Go for the first CLI implementation increment. A properly built binary does not require a Go runtime installation on the target machine.
+- **Git integration:** use the installed **external Git CLI**, not an embedded Git library. Invoke it with explicit argument arrays and controlled environment/process execution (no shell interpolation). In the first slice, prefer the existing Git object/tree/ref APIs already exercised by the standalone fixtures.
+- **No new mandatory abstraction:** do not implement a generalized interchangeable Git engine, micro-worktree manager, provider plugin registry or daemon just to preserve unchosen alternatives.
+- **Still unchosen:** exact Go module/dependencies, Git version floor, target OS/architecture and packaging matrix, cross-platform locking primitives, real durability/fsync policy, public CLI names/input formats and remote synchronization scheduling. POSIX `fcntl.flock` from a Python fixture is **not** directly portable Go runtime behavior.
+
+### Completed request and audit publication
+
+| Request completion class | Document tree | Git publication | Audit record |
+| --- | --- | --- | --- |
+| Completed changing mutating request | Changed | One content commit | Complete versioned request/member outcomes in its commit message |
+| Completed no-op mutating request | Identical | **One audit-only commit** | Complete request/member outcomes in the commit message |
+| Completed mutating request with all ordinary members failed | Identical | **One audit-only commit** | All ordered failures and request outcome in the commit message |
+| Whole request rejected for unsafe local concurrent publication conflict | Identical from that request | **No commit of any kind** | Error returned to caller; no durable shared Git audit entry |
+| Invalid input rejected before request admission/execution (initial proposal) | Identical | No commit | Error returned to caller, no published audit |
+| Read-only action or transient network synchronization retry | Identical | No request-audit commit | Existing sync-status semantics remain separate |
+| Already locally published request, later remote push fails | Existing accepted tree retained | **No new request commit** due only to push failure | Existing local commit remains; remote pending/conflict status separately observable |
+
+A no-change audit-only commit **advances the authoritative local ref and affects ref contention**, even though its user document tree equals its parent tree. It therefore requires the **same guarded ref publication**, complete final outcomes and lost-response/idempotency recovery as a changing request. A duplicate request ID/payload digest must not produce a second commit; a different payload under an existing ID must fail closed, subject to the final request identity contract. A failed speculative publication must never be reported as a completed request, even if earlier members provisionally succeeded.
+
+**Boundary:** “no commit” for a rejected concurrent request means none reachable/published in the authoritative history. Private staging that prepares an unreachable candidate object can exist under some Git protocols; whether *even constructing* such objects is forbidden is still a test/design gate. No audit-only attempt can be used to circumvent the no-commit decision.
+
+### Focused acceptance criteria (not executed against awl)
+
+- **RD-01:** Accepted body edit -> exactly one content+audit commit with all member outcomes; original user-owned bytes retained except requested edit.
+- **RD-02:** Completed valid no-op -> one audit-only commit, unchanged document tree, full outcome queryable by request ID.
+- **RD-03:** Completed composite with all ordinary members failed -> one audit-only commit; every member failure retained in order; unchanged document tree.
+- **RD-04:** Unsafe concurrent whole-request conflict (even after staged successes) -> no published user content and **no request commit**; caller receives reread/resubmit diagnostic.
+- **RD-05:** Lost response after audit-only ref publication -> same request ID and identical payload returns recorded result without a duplicate commit; changed payload with existing ID is rejected.
+- **RD-06:** Two concurrent audit-only requests -> both finalized outcomes survive if safely publishable; no silent head loss; bounded retries and explicit uncertain outcome on interruption.
+- **RD-07:** A subsequent remote push rejection cannot erase locally acknowledged content or audit-only commits.
+- **RD-08:** `awl` Go binary invokes Git without a shell; Git missing/unsupported, malformed stdout, nonzero exit, path attack and process interruption produce controlled diagnostics rather than silent mutation.
+
+These are **new acceptance proposals**, not new observations from the previous **Python** fixture. The owner selected the high-level behavior and technology, but not a fixed CLI schema, Git version, OS support guarantee, exact message format, dependency or implementation timeline.
+
+**Coordination risk:** Draft PR #2 introduces `FR-27` and `AC-25`–`AC-29` identifiers also used for different requirements/scenarios in this PR #4. Reconcile those IDs and their semantics before either PR is merged; do not silently renumber another PR's work or treat both proposed documents as already integrated.
