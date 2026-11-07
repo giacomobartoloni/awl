@@ -14,7 +14,7 @@ The table below describes **currently implemented experimental behavior**. It do
 
 | Command | Accepted experimental invocation | Plain-text success | JSON success | Boundaries / rejection |
 | --- | --- | --- | --- | --- |
-| `init` | `awl init --slug demo [--remote GitURL] [--repo-dir /absolute/new.git] [--json]` | `initialized` | `status=initialized`, `project` | Explicit bootstrap only; source Git worktree required; optional remote configuration does no network operation; optional exact location for a **new** bare managed repository; incompatible binding rejected |
+| `init` | `awl init [--slug demo] [--remote GitURL] [--repo-dir /absolute/new.git] [--json]` | `initialized` | `status=initialized`, `project` | Explicit bootstrap only; source Git worktree required; optional remote configuration does no network operation; optional exact location for a **new** bare managed repository; incompatible binding rejected |
 | `remote add` | `awl remote add GitURL [--json]` | `remote_added` / `remote_unchanged` | `status`, `project` | Requires initialized local binding; same URL idempotent, changed URL rejected; no managed document commit or network I/O |
 | `ls` | `awl ls [directory] [--json]` | Sorted, project-relative Markdown paths, one per line | `status=ok`, `project`, `revision`, `paths` (empty array when none) | Enumerates ordinary Markdown blobs in one committed **managed** Git snapshot, not source Git; optional validated relative directory; read-only |
 | `read` | `awl read document.md [--json]` | Raw original bytes, no forced newline | `status=ok`, `project`, `revision`, `content` | Exact project-relative Markdown target; missing document is an error; JSON mode requires UTF-8; read-only |
@@ -25,6 +25,26 @@ The table below describes **currently implemented experimental behavior**. It do
 `--project <slug>` is a **leading** experimental selector and may only confirm the identity already resolved from the current source worktree. Its out-of-repository discovery behavior is deliberately **deferred**.
 
 For commands supporting a path before options, the current parser accepts `awl read Activities/a.md --json`, `awl ls Activities --json`, and `awl edit Activities/a.md --input - --json`. This is an observed implementation subset, not a general parser proposal.
+
+## Optional project slug (experimental)
+
+A new project can now run `awl init --json` with no `--slug`. The CLI derives the slug from the **source Git repository's directory name** (not the Git remote's URL, the invoking nested directory, or an AgentWorklog document directory). For standard Git layouts, the common `.git` directory identifies the same original repository across linked worktrees, even when a linked worktree has a different folder name.
+
+The deterministic conversion uses lowercase ASCII letters and digits, turns contiguous punctuation, spaces, underscores and other unsupported characters into a single `-`, and trims separators at both ends. A name beginning with digits is prefixed with `repo-`; the result is trimmed to at most 64 characters without a trailing separator. This intentionally minimal experimental conversion does **not** transliterate non-ASCII letters. A name producing no usable ASCII letters or digits fails with `INVALID_SLUG` and asks for an explicit `--slug`, before writing project configuration or allocating a store.
+
+| Source Git directory | Derived slug |
+| --- | --- |
+| `My.Project Repo` | `my-project-repo` |
+| `Geco82_awl CLI` | `geco82-awl-cli` |
+| `123 Project!` | `repo-123-project` |
+
+- `awl init --slug chosen` keeps accepting an explicit slug and does not normalize it implicitly.
+- `awl init --slug ""` is **invalid**: an explicitly empty override is not the same as omitting the flag.
+- When the current repository already has a valid `.awl/project.yaml`, invoking `awl init` with no slug reuses the **existing** project identity even if the repository name differs. No silent rename or rebinding occurs.
+- A `--project` selector from the source context still must match the resulting/resolved project identity. Out-of-source-repository project lookup remains deferred.
+- Without `--repo-dir`, the default XDG managed-store location is unchanged. The inferred slug is used in its random-suffixed new store directory name; with `--repo-dir`, the exact supplied target continues to take precedence.
+
+These are observed implementation rules in the draft experiment, not a final approved global naming or cross-platform path specification.
 
 ## Explicit managed repository path (experimental)
 
