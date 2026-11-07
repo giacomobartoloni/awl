@@ -145,3 +145,37 @@ func TestCLIContractInitRejectsExplicitEmptySlug(t *testing.T) {
 		t.Fatalf("explicit empty --slug created source configuration: %v", err)
 	}
 }
+
+// First use from a linked worktree must not derive its arbitrary folder name.
+func TestCLIContractInitDerivedSlugFromUninitializedLinkedWorktree(t *testing.T) {
+	c := renamedSourceRepo(t, "Original.Repo")
+	c.git(t, "commit", "-q", "--allow-empty", "-m", "fixture initial commit")
+	linkedPath := filepath.Join(filepath.Dir(c.Source), "unrelated-feature-worktree")
+	c.git(t, "worktree", "add", "-q", "-b", "linked", linkedPath)
+	linked := c
+	linked.Source = linkedPath
+
+	got := linked.mustCall(t, nil, "init", "--json")
+	if got.Status != "initialized" || got.Project != "original-repo" {
+		t.Fatalf("first init from linked worktree used the wrong identity: %+v", got)
+	}
+	shared, err := os.ReadFile(filepath.Join(linkedPath, ".awl", "project.yaml"))
+	if err != nil || !bytes.Contains(shared, []byte("  slug: original-repo\n")) {
+		t.Fatalf("linked project configuration has wrong slug: %v %q", err, shared)
+	}
+}
+
+func TestCLIContractInitDerivedSlugRespectsLeadingProjectSelector(t *testing.T) {
+	c := renamedSourceRepo(t, "User.Worklog")
+	rc, out, stderr := c.call(nil, "--project", "other", "init", "--json")
+	if rc != 2 || stderr != "" || !bytes.Contains(out, []byte("PROJECT_CONFLICT")) {
+		t.Fatalf("conflicting --project was accepted: exit=%d stdout=%q stderr=%q", rc, out, stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(c.Source, ".awl")); !os.IsNotExist(err) {
+		t.Fatalf("conflicting --project created configuration: %v", err)
+	}
+	got := c.mustCall(t, nil, "--project", "user-worklog", "init", "--json")
+	if got.Project != "user-worklog" || got.Status != "initialized" {
+		t.Fatalf("matching explicit project selector was rejected: %+v", got)
+	}
+}
