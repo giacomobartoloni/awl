@@ -257,9 +257,9 @@ func TestFrontmatterBOMAndMalformedFenceAreProtected(t *testing.T) {
 
 func TestRejectedInitAndDuplicateOperationIDsHaveNoSideEffects(t *testing.T) {
 	c := fixture(t)
-	rc, _, _ := c.call(nil, "init", "--json")
-	if rc == 0 {
-		t.Fatal("missing project slug accepted")
+	rc, out, _ := c.call(nil, "init", "--slug", "Invalid Slug!", "--json")
+	if rc != 2 || !bytes.Contains(out, []byte("INVALID_SLUG")) {
+		t.Fatalf("invalid explicit slug accepted: exit=%d output=%q", rc, out)
 	}
 	if _, e := os.Stat(filepath.Join(c.Source, ".awl")); !os.IsNotExist(e) {
 		t.Fatalf("invalid init created source .awl: %v", e)
