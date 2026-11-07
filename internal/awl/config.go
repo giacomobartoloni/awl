@@ -11,20 +11,7 @@ import (
 	"syscall"
 )
 
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}package awl
-
-import (
-	"bytes"
-	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"syscall"
-)
-
-)
+var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 // repositorySlug derives a stable candidate from the source Git repository.
 // For ordinary Git repositories and linked worktrees, the shared .git directory
@@ -62,7 +49,6 @@ func repositorySlug(root, common string) (string, error) {
 	}
 	return slug, nil
 }
-
 
 type binding struct {
 	Slug      string
