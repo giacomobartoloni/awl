@@ -266,7 +266,7 @@ func TestRejectedInitAndDuplicateOperationIDsHaveNoSideEffects(t *testing.T) {
 	}
 	c.init(t)
 	req := `{"request_id":"bad-members","operations":[{"id":"duplicate","op":"create","path":"one.md","content":"A"},{"id":"duplicate","op":"create","path":"two.md","content":"B"}]}`
-	rc, out, _ := c.call([]byte(req), "apply", "--json")
+	rc, out, _ = c.call([]byte(req), "apply", "--json")
 	if rc == 0 || !bytes.Contains(out, []byte("INVALID_REQUEST")) {
 		t.Fatalf("duplicate accepted: %d %s", rc, out)
 	}
