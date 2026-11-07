@@ -11,7 +11,58 @@ import (
 	"syscall"
 )
 
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}package awl
+
+import (
+	"bytes"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+)
+
+)
+
+// repositorySlug derives a stable candidate from the source Git repository.
+// For ordinary Git repositories and linked worktrees, the shared .git directory
+// identifies the same original repository even if worktree folder names differ.
+// Other Git layouts fall back to the current worktree root.
+func repositorySlug(root, common string) (string, error) {
+	name := filepath.Base(root)
+	if filepath.Base(common) == ".git" {
+		name = filepath.Base(filepath.Dir(common))
+	}
+	var normalized []byte
+	lastSeparator := false
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			normalized = append(normalized, byte(r))
+			lastSeparator = false
+		case len(normalized) > 0 && !lastSeparator:
+			normalized = append(normalized, '-')
+			lastSeparator = true
+		}
+	}
+	slug := strings.TrimRight(string(normalized), "-")
+	if slug == "" {
+		return "", fail("INVALID_SLUG", "cannot derive a slug from the current Git repository name; supply --slug")
+	}
+	if slug[0] >= '0' && slug[0] <= '9' {
+		slug = "repo-" + slug
+	}
+	if len(slug) > 64 {
+		slug = strings.TrimRight(slug[:64], "-")
+	}
+	if !slugPattern.MatchString(slug) {
+		return "", fail("INVALID_SLUG", "cannot derive a valid slug from the current Git repository name; supply --slug")
+	}
+	return slug, nil
+}
+
 
 type binding struct {
 	Slug      string
@@ -148,10 +199,21 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	if e != nil {
 		return project{}, e
 	}
-	// Malformed first-use arguments must not create even the .awl directory.
+	// A new project infers its slug before creating any configuration or
+	// store. Re-initializing an existing project uses its recorded identity.
 	firstProjectFile := filepath.Join(root, ".awl", "project.yaml")
-	if _, e = os.Lstat(firstProjectFile); os.IsNotExist(e) && !slugPattern.MatchString(slug) {
-		return project{}, fail("INIT_INPUT_REQUIRED", "new project needs --slug; --remote is optional")
+	if _, e = os.Lstat(firstProjectFile); os.IsNotExist(e) {
+		if slug == "" {
+			slug, e = repositorySlug(root, common)
+			if e != nil {
+				return project{}, e
+			}
+		}
+		if !slugPattern.MatchString(slug) {
+			return project{}, fail("INVALID_SLUG", "new project requires a valid --slug")
+		}
+	} else if e != nil {
+		return project{}, e
 	}
 	if explicit != "" && slug != "" && explicit != slug {
 		return project{}, fail("PROJECT_CONFLICT", "explicit project does not match init slug")
@@ -207,7 +269,7 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	} else if !os.IsNotExist(e) {
 		return project{}, e
 	} else if !slugPattern.MatchString(slug) {
-		return project{}, fail("INIT_INPUT_REQUIRED", "new project needs --slug; --remote is optional")
+		return project{}, fail("INVALID_SLUG", "new project requires a valid --slug")
 	}
 	if explicit != "" && explicit != slug {
 		return project{}, fail("PROJECT_CONFLICT", "--project disagrees with source project")
