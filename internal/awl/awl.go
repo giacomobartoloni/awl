@@ -112,21 +112,27 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	fs.SetOutput(io.Discard)
 	switch name {
 	case "init":
-		slug := fs.String("slug", "", "project slug for new configuration")
+		slug := fs.String("slug", "", "optional project slug; defaults to current repository name")
 		remote := fs.String("remote", "", "authoritative worklog Git remote for new configuration")
 		repoDir := fs.String("repo-dir", "", "absolute path for a new managed bare Git repository")
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-			return c.emitError(fail("USAGE", "init accepts --slug, optional --remote, --repo-dir, --json"))
+			return c.emitError(fail("USAGE", "init accepts optional --slug, --remote, --repo-dir, --json"))
 		}
-		repoDirProvided := false
+		repoDirProvided, slugProvided := false, false
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "repo-dir" {
+			switch f.Name {
+			case "repo-dir":
 				repoDirProvided = true
+			case "slug":
+				slugProvided = true
 			}
 		})
 		if repoDirProvided && *repoDir == "" {
 			return c.emitError(fail("INVALID_REPO_DIR", "--repo-dir must name a new absolute directory"))
+		}
+		if slugProvided && *slug == "" {
+			return c.emitError(fail("INVALID_SLUG", "--slug must not be empty; omit it to infer from the Git repository"))
 		}
 		p, e := initialize(*slug, *remote, *repoDir, c.explicit)
 		if e != nil {
