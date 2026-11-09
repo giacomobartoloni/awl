@@ -86,8 +86,15 @@ func (c *cli) writeRequest(req request) int {
 			return c.emitError(e)
 		}
 		o.Path = path
-		if o.Op != "create" && o.Op != "edit" {
-			return c.emitError(fail("INVALID_REQUEST", "only create/edit are in this spike"))
+		if o.Op != "create" && o.Op != "edit" && o.Op != "metadata" {
+			return c.emitError(fail("INVALID_REQUEST", "only create/edit/metadata are in this spike"))
+		}
+		if o.Op == "metadata" {
+			if e := validateMetadataEdits(o.Metadata); e != nil {
+				return c.emitError(e)
+			}
+		} else if len(o.Metadata) != 0 {
+			return c.emitError(fail("INVALID_REQUEST", "only metadata operations accept metadata edits"))
 		}
 		if o.Op == "edit" && o.Old == "" {
 			return c.emitError(fail("INVALID_REQUEST", "edit.old is required"))
@@ -173,6 +180,18 @@ func (c *cli) writeRequest(req request) int {
 		} else if prev.RequestID != "" {
 			continue
 		}
+		// A lost CAS must not overwrite an independently changed YAML target.
+		for _, o := range req.Operations {
+			if o.Op != "metadata" {
+				continue
+			}
+			before, oldErr := readEntry(p, head, o.Path)
+			after, newErr := readEntry(p, newer, o.Path)
+			if oldErr != nil || newErr != nil || !before.Exists || !after.Exists ||
+				!metadataTargetsStable(before.Bytes, after.Bytes, o.Metadata) {
+				return c.emitError(fail("CONCURRENT_REQUEST_CONFLICT", "concurrent metadata target changed; reread and resubmit"))
+			}
+		}
 		rerun, _, e := stage(p, newer, req.Operations)
 		if e != nil {
 			return c.emitError(e)
@@ -236,6 +255,22 @@ func stage(p project, head string, ops []operation) ([]member, map[string]entry,
 			} else {
 				file = entry{Mode: "100644", Bytes: []byte(o.Content), Exists: true}
 				changed[o.Path] = file
+			}
+		case "metadata":
+			if !file.Exists {
+				m.Status = "failed"
+				m.Error = &diagnostic{"DOCUMENT_NOT_FOUND", "document does not exist"}
+			} else {
+				replacement, e := metadataApply(file.Bytes, o.Metadata)
+				if e != nil {
+					m.Status = "failed"
+					m.Error = coded(e)
+				} else if bytes.Equal(file.Bytes, replacement) {
+					m.Status = "no_op"
+				} else {
+					file.Bytes = replacement
+					changed[o.Path] = file
+				}
 			}
 		case "edit":
 			if !file.Exists {
