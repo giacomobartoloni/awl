@@ -7,25 +7,25 @@ import (
 	"testing"
 )
 
-func TestCLIContractMetadataAtomicUpdatePreservesMarkdownBytes(t *testing.T) {
+func TestCLIContractMetadataAtomicSetPreservesMarkdownBytes(t *testing.T) {
 	c := fixture(t)
 	c.init(t)
 	path := "Activities/finish.md"
 	before := []byte("---\r\nstatus: active # existing comment\r\ncompleted_at: null\r\ntags: [activity, awl]\r\n---\r\n# Outcome\r\nKeep [[links]] and body bytes.\r\n")
 	c.mustCall(t, before, "create", path, "--json")
 
-	update := []byte(`{"set":{"/status":"completed","/completed_at":"2026-11-09"}}`)
-	applied := c.mustCall(t, update, "metadata", "update", path, "--request-id", "metadata-finish-01", "--json")
+	update := []byte(`{"/status":"completed","/completed_at":"2026-11-09"}`)
+	applied := c.mustCall(t, update, "metadata", "set", path, "--request-id", "metadata-finish-01", "--json")
 	if applied.Status != "applied" || len(applied.Members) != 1 || applied.Members[0].Status != "applied" {
-		t.Fatalf("metadata update: %+v", applied)
+		t.Fatalf("metadata set: %+v", applied)
 	}
 	expected := []byte("---\r\nstatus: \"completed\" # existing comment\r\ncompleted_at: \"2026-11-09\"\r\ntags: [activity, awl]\r\n---\r\n# Outcome\r\nKeep [[links]] and body bytes.\r\n")
 	if got := c.read(t, path); !bytes.Equal(got, expected) {
 		t.Fatalf("unrelated bytes changed:\n got %q\nwant %q", got, expected)
 	}
-	replayed := c.mustCall(t, update, "metadata", "update", path, "--request-id", "metadata-finish-01", "--json")
+	replayed := c.mustCall(t, update, "metadata", "set", path, "--request-id", "metadata-finish-01", "--json")
 	if !replayed.Replayed || replayed.Commit != applied.Commit {
-		t.Fatalf("metadata replay failed: %+v", replayed)
+		t.Fatalf("metadata set replay failed: %+v", replayed)
 	}
 
 	rc, out, stderr := c.call(nil, "metadata", "get", path, "/status", "--json")
@@ -41,16 +41,16 @@ func TestCLIContractMetadataAtomicUpdatePreservesMarkdownBytes(t *testing.T) {
 	}
 }
 
-func TestCLIContractMetadataUpdateFailureDoesNotPartiallyChangeDocument(t *testing.T) {
+func TestCLIContractMetadataSetFailureDoesNotPartiallyChangeDocument(t *testing.T) {
 	c := fixture(t)
 	c.init(t)
 	path := "Activities/atomic.md"
 	before := []byte("---\nstatus: active\ncompleted_at: null\n---\nBody unchanged\n")
 	c.mustCall(t, before, "create", path, "--json")
-	update := []byte(`{"set":{"/status":"completed","/unknown":"value"}}`)
-	rc, out, stderr := c.call(update, "metadata", "update", path, "--json")
+	update := []byte(`{"/status":"completed","/unknown":"value"}`)
+	rc, out, stderr := c.call(update, "metadata", "set", path, "--json")
 	if rc != 2 || !bytes.Contains(out, []byte("METADATA_TARGET_NOT_FOUND")) {
-		t.Fatalf("expected failed atomic member: %d %s %s", rc, out, stderr)
+		t.Fatalf("expected failed atomic metadata set: %d %s %s", rc, out, stderr)
 	}
 	if got := c.read(t, path); !bytes.Equal(got, before) {
 		t.Fatalf("failed metadata update changed document: %q", got)
@@ -144,5 +144,34 @@ func TestCLIContractMetadataRejectsMultilineScalarWithoutDataLoss(t *testing.T) 
 	}
 	if got := c.read(t, path); !bytes.Equal(got, initial) {
 		t.Fatalf("multiline scalar edit changed unrelated content: %q", got)
+	}
+}
+
+func TestCLIContractMetadataSetRequiresUnambiguousInputs(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Activities/inputs.md"
+	initial := []byte("---\nstatus: active\ncompleted_at: null\n---\nBody\n")
+	c.mustCall(t, initial, "create", path, "--json")
+	for _, tc := range []struct {
+		name string
+		input []byte
+		args []string
+	}{
+		{"missing value", nil, []string{"metadata", "set", path, "/status", "--json"}},
+		{"missing map input", nil, []string{"metadata", "set", path, "--json"}},
+		{"conflicting value sources", []byte(`"other"`), []string{"metadata", "set", path, "/status", "completed", "--input", "-", "--json"}},
+		{"removed update command", []byte(`{"/status":"completed"}`), []string{"metadata", "update", path, "--input", "-", "--json"}},
+		{"old update envelope", []byte(`{"set":{"/status":"completed"}}`), []string{"metadata", "set", path, "--input", "-", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, _, _ := c.call(tc.input, tc.args...)
+			if rc != 2 {
+				t.Fatalf("expected rejected metadata invocation, exit=%d", rc)
+			}
+			if got := c.read(t, path); !bytes.Equal(got, initial) {
+				t.Fatalf("rejected input changed document: %q", got)
+			}
+		})
 	}
 }
