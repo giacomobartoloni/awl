@@ -1,11 +1,11 @@
 ---
 name: awl-cli
-description: Use when a task requires the awl command-line tool to inspect or change managed Markdown documents, edit YAML frontmatter, initialize a Git-backed project, or handle write failures and request retries.
+description: Use when a task requires the awl command-line tool to inspect or change managed Markdown documents, edit YAML frontmatter, initialize a project, or handle write failures and request retries.
 ---
 
 # awl CLI
 
-`awl` manages Markdown documents in a separate Git-backed store. The current source Git repository or linked worktree supplies project context; `awl` does not write documents into the source working tree.
+Use `awl` to manage Markdown documents associated with the current project. The CLI resolves project context from the current Git repository or linked worktree. Managed documents are not written directly to the source working tree.
 
 ## Quick reference
 
