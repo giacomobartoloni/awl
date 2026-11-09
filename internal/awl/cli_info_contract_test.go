@@ -59,8 +59,8 @@ func TestCLIContractHelpAndVersionRejectAmbiguousInvocations(t *testing.T) {
 		{"--help", "unexpected"},
 		{"help", "unknown"},
 		{"help", "read", "unexpected"},
-		{"init", "--slug", "--help"}, // a flag value is not a help request
-		{"apply", "--input", "--help"}, // a flag value is not a help request
+		{"init", "--slug", "--help"},
+		{"apply", "--input", "--help"},
 	} {
 		rc, out, stderr := c.call(nil, args...)
 		if rc != 2 || len(out) != 0 || !strings.HasPrefix(stderr, "awl: ") {
