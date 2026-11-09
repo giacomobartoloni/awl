@@ -110,3 +110,24 @@ func TestCLIContractMetadataRejectsUnsupportedYAMLWithoutRewrite(t *testing.T) {
 		})
 	}
 }
+
+func TestCLIContractMetadataTypedValuesAndEscapedPointer(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Specs/typed.md"
+	initial := []byte("---\ncount: 1\nflag: false\nexternal/id: old\n---\nBody\n")
+	c.mustCall(t, initial, "create", path, "--json")
+
+	number := []byte("9007199254740993")
+	c.mustCall(t, number, "metadata", "set", path, "/count", "--input", "-", "--json")
+	c.mustCall(t, []byte("true"), "metadata", "set", path, "/flag", "--input", "-", "--json")
+	c.mustCall(t, nil, "metadata", "set", path, "/external~1id", "new", "--json")
+	want := []byte("---\ncount: 9007199254740993\nflag: true\nexternal/id: \"new\"\n---\nBody\n")
+	if got := c.read(t, path); !bytes.Equal(got, want) {
+		t.Fatalf("metadata typed update changed bytes or precision: %q", got)
+	}
+	c.mustCall(t, []byte("null"), "metadata", "set", path, "/count", "--input", "-", "--json")
+	if got := c.read(t, path); !bytes.Contains(got, []byte("count: null\n")) {
+		t.Fatalf("null was not written as a typed YAML value: %q", got)
+	}
+}
