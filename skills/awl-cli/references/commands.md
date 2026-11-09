@@ -108,7 +108,10 @@ Current CLI exit codes:
 | 3 | Accepted composite with partial member failure |
 | 4 | JSON response encoding failure |
 
-Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `document_tree`, and ordered `members`. A replay also has `replayed: true`. Validation failures can return `status: error` and `error: {code, message}`; ordinary member failures can return `status: failed` with errors inside `members`.
+Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `document_tree`, and ordered `members`. Validation failures can return `status: error` and `error: {code, message}`; ordinary member failures can return `status: failed` with errors inside `members`.
+
+- On an identical request replay, `replayed: true` accompanies the recorded result. The original `status` (for example, `applied`), `members`, `commit`, and `document_tree` are returned; `status` does **not** change to `replayed`, and replay does not publish a new commit.
+- The `revision` returned by `ls`, `read`, or `metadata get` identifies the current managed commit. A failed or no-op mutation may publish an audit-only commit and advance that revision while leaving the `document_tree` and document bytes unchanged. Verify content preservation with the tree identifier and/or a readback comparison, not an unchanged revision.
 
 - Check **both exit code and member statuses**; do not equate `commit` with a changed document tree.
 - For ambiguous outcomes (e.g. `PUBLICATION_OUTCOME_UNKNOWN`), inspect state and retry the **same request ID and bytes**, not a new request.
