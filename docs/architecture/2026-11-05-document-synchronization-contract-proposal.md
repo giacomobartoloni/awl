@@ -10,6 +10,37 @@
 
 > **Approval boundary:** This document compares a potential replacement for Git-centered persistence and synchronization. The Git-centered design merged via PR #1 remains the recorded repository baseline. Do not treat the proposal, its examples, or acceptance criteria as an approved architecture, a public CLI schema, or authorization to implement. In particular, do not silently supersede owner-confirmed Git-specific requirements or alter PR #2.
 
+## Integration alignment (2026-11-09)
+
+This section records how the **exploratory** contract in this document relates to the repository's now-merged architecture and experimental CLI. The original 2026-11-05 comparison below is preserved for research provenance; historical references to other PRs as drafts describe their status **at the time of writing**, not their current merge state.
+
+### Baseline retained, not superseded
+
+- **Current authority model:** one managed local Git document/audit store, with a Git remote as the intended authoritative hub when configured. A project can operate locally without a remote; `remote add` configures a URL but does not itself synchronize. Explicit Git fetch/reconcile/push, satellite export, and search-index refresh are separate, later capabilities. The local Go implementation merged through PRs #7, #9 and #10 remains experimental and does **not** implement remote synchronization.
+- **Request semantics:** local changed requests use one Git content-and-audit commit; completed no-change or ordinarily all-failed mutating requests use an audit-only commit; unsafe concurrent publication rejection produces **no commit**. Local acknowledgement is distinct from remote publication or index freshness. The CLI does not require callers to provide revision tokens.
+- **Architecture decision:** [ADR 0001 — Modular Monolith](../adr/0001-modular-monolith.md) is owner-accepted and integrated. Avoid speculative provider interfaces, registries, dependency-injection layers or package layouts.
+
+### Complementary contracts, different responsibilities
+
+This document's **verified Base/Local/Remote (B/L/R)** reasoning, conflict preservation, staged import, guarded publication, checkpoints and ambiguous-acknowledgement recovery remain useful design criteria even when Git is the selected authority. In the initial Git-to-Git synchronization design, Git commit ancestry and remote refs provide relevant causality and publication units; **logical per-document B/L/R does not imply independent per-file remote Git transactions or require introducing a second persistence engine**. Exact reconciliation policy, durable checkpoint representation and fault handling must be designed and tested before implementation.
+
+Read this alongside [Sync Engines, Backends, and Transports — Capability-Based Design Proposal](2026-11-06-sync-backends-and-transports-design-proposal.md), integrated through PR #8:
+
+| Responsibility | Current baseline / intended first step | Distinct possible extension |
+| --- | --- | --- |
+| Local document persistence and request audit | Managed local Git; bounded experimental implementation | Alternative persistence requires a separate product decision and migration |
+| Authoritative remote synchronization | One Git hub; explicit fetch, conservative reconcile, guarded push and verified acknowledgement are **proposed, not implemented** | Another authority only after verified conditional writes, retained causality/checkpoints, multi-writer constraints and recovery |
+| Secondary transfer/export | No automatic transport; optional **downstream projection of a verified Git-hub snapshot** | rsync/rclone copy and provider APIs are candidates; mirrors/deletes/bidirectional imports need explicit safety approval |
+| Search | Derived and independent of authoritative document state | QMD or another engine remains an evaluated choice, not a selected runtime requirement |
+
+Git synchronization and rsync/rclone file transport are **not interchangeable implementations of the same guarantee**. File transfer by itself does not establish Git audit, common ancestry, conflict-safe multiwriter publication, or a second authoritative store. In particular, a future Google Drive authority and a Google Drive satellite export have different requirements and must not be conflated.
+
+### Approval boundary for integration
+
+Integrating this document records a **valuable research and design contract**, not approval to replace local Git, switch the remote authority, implement a provider abstraction, expose a new configuration schema, enable destructive mirroring, or promise automated same-file merge. The alternative-authority scenarios and candidate acceptance tests in later sections remain **proposals**. Before changing the selected Git baseline, require an explicit owner decision, a reviewed requirements/ADR update, relevant migration and compatibility analysis, and concrete provider/concurrency/crash verification. Implement one bounded concrete Git synchronization path first if and when authorized; avoid speculative implementation from this document alone.
+
+---
+
 ## 1. Motivation and requirements boundary
 
 The owner raised three reasons to reconsider Git as the mandatory synchronization engine: (1) Git ref and merge orchestration under concurrent requests is complex; (2) independent remote providers could be strategically useful; (3) per-document publication may reduce coordination between unrelated files. awl will maintain a complete managed local copy of available project Markdown documents and support offline writes.
