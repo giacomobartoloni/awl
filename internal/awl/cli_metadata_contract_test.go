@@ -15,7 +15,7 @@ func TestCLIContractMetadataAtomicSetPreservesMarkdownBytes(t *testing.T) {
 	c.mustCall(t, before, "create", path, "--json")
 
 	update := []byte(`{"/status":"completed","/completed_at":"2026-11-09"}`)
-	applied := c.mustCall(t, update, "metadata", "set", path, "--request-id", "metadata-finish-01", "--json")
+	applied := c.mustCall(t, update, "metadata", "set", path, "--input", "-", "--request-id", "metadata-finish-01", "--json")
 	if applied.Status != "applied" || len(applied.Members) != 1 || applied.Members[0].Status != "applied" {
 		t.Fatalf("metadata set: %+v", applied)
 	}
@@ -23,7 +23,7 @@ func TestCLIContractMetadataAtomicSetPreservesMarkdownBytes(t *testing.T) {
 	if got := c.read(t, path); !bytes.Equal(got, expected) {
 		t.Fatalf("unrelated bytes changed:\n got %q\nwant %q", got, expected)
 	}
-	replayed := c.mustCall(t, update, "metadata", "set", path, "--request-id", "metadata-finish-01", "--json")
+	replayed := c.mustCall(t, update, "metadata", "set", path, "--input", "-", "--request-id", "metadata-finish-01", "--json")
 	if !replayed.Replayed || replayed.Commit != applied.Commit {
 		t.Fatalf("metadata set replay failed: %+v", replayed)
 	}
@@ -48,7 +48,7 @@ func TestCLIContractMetadataSetFailureDoesNotPartiallyChangeDocument(t *testing.
 	before := []byte("---\nstatus: active\ncompleted_at: null\n---\nBody unchanged\n")
 	c.mustCall(t, before, "create", path, "--json")
 	update := []byte(`{"/status":"completed","/unknown":"value"}`)
-	rc, out, stderr := c.call(update, "metadata", "set", path, "--json")
+	rc, out, stderr := c.call(update, "metadata", "set", path, "--input", "-", "--json")
 	if rc != 2 || !bytes.Contains(out, []byte("METADATA_TARGET_NOT_FOUND")) {
 		t.Fatalf("expected failed atomic metadata set: %d %s %s", rc, out, stderr)
 	}
