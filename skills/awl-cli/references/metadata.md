@@ -18,6 +18,7 @@ Pointers use **RFC 6901 JSON Pointer**:
 - Escape `~` as `~0` and `/` as `~1` within a key segment.
 - `get` supports reading sequence members by numeric index. `/tags/-` is **not** a readable member.
 - `--json` returns a typed `value` along with `project`, `revision`, `path` and `pointer`. Plain strings are printed without JSON quotes in text mode.
+- When a pointer does not identify an existing value (including an out-of-range sequence index), `metadata get` fails with exit code 2 and `METADATA_TARGET_NOT_FOUND`. A missing document is reported separately as `DOCUMENT_NOT_FOUND`.
 
 ## Set an existing scalar value
 
