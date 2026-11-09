@@ -1,6 +1,6 @@
 # awl CLI command reference (experimental)
 
-This reference describes the Go implementation in the stacked PR #9 / PR #7. Exact flags, JSON envelopes and exit codes are not yet an approved stable public interface.
+This reference describes the experimental Go CLI now merged into `main` (local commands from PR #7, metadata from PR #9, help/version from PR #10). Exact flags, JSON envelopes and exit codes are not yet an approved stable public interface.
 
 ## Context and project setup
 
@@ -21,6 +21,21 @@ awl remote add https://example.invalid/managed.git --json
 ```
 
 The optional leading `awl --project demo ...` is an identity check against the **currently resolved** source project, not out-of-repository project discovery.
+
+## Discover commands and inspect a build
+
+These informational commands work without an initialized `awl` project:
+
+```sh
+awl --help
+awl help metadata
+awl metadata --help
+awl --version
+```
+
+- `awl --help`, `awl -h` and `awl help` print global usage; `awl help COMMAND` and `awl COMMAND --help` show command-specific usage. For example, `awl metadata set --help` shows the metadata command group.
+- `awl --version` and `awl version` print a build identifier. Source builds can report `dev`, a VCS-derived revision or a Go module pseudo-version (possibly with a `+dirty` suffix). This identifies the build; it does **not** certify a tagged release, clean source tree, or production readiness. If exact provenance matters, also inspect the built executable with `go version -m` and verify the source revision.
+- Help/version output is human-readable; do not expect an operational `--json` envelope for these commands.
 
 ## Read and list
 
@@ -98,6 +113,6 @@ Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `d
 - Check **both exit code and member statuses**; do not equate `commit` with a changed document tree.
 - For ambiguous outcomes (e.g. `PUBLICATION_OUTCOME_UNKNOWN`), inspect state and retry the **same request ID and bytes**, not a new request.
 - For `CONCURRENT_REQUEST_CONFLICT`, reread before deciding on an action. Never silently overwrite the winner.
-- `awl --version`, `awl sync` and broad project discovery are **not available** in this experimental version.
+- `awl sync` and broad project discovery are **not available** in this experimental version.
 
 See [metadata](metadata.md) for frontmatter operations. No command here synchronizes a remote or writes Markdown into the source Git working tree.
