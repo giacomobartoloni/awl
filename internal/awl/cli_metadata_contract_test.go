@@ -1,0 +1,112 @@
+package awl
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestCLIContractMetadataAtomicUpdatePreservesMarkdownBytes(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Activities/finish.md"
+	before := []byte("---\r\nstatus: active # existing comment\r\ncompleted_at: null\r\ntags: [activity, awl]\r\n---\r\n# Outcome\r\nKeep [[links]] and body bytes.\r\n")
+	c.mustCall(t, before, "create", path, "--json")
+
+	update := []byte(`{"set":{"/status":"completed","/completed_at":"2026-11-09"}}`)
+	applied := c.mustCall(t, update, "metadata", "update", path, "--request-id", "metadata-finish-01", "--json")
+	if applied.Status != "applied" || len(applied.Members) != 1 || applied.Members[0].Status != "applied" {
+		t.Fatalf("metadata update: %+v", applied)
+	}
+	expected := []byte("---\r\nstatus: \"completed\" # existing comment\r\ncompleted_at: \"2026-11-09\"\r\ntags: [activity, awl]\r\n---\r\n# Outcome\r\nKeep [[links]] and body bytes.\r\n")
+	if got := c.read(t, path); !bytes.Equal(got, expected) {
+		t.Fatalf("unrelated bytes changed:\n got %q\nwant %q", got, expected)
+	}
+	replayed := c.mustCall(t, update, "metadata", "update", path, "--request-id", "metadata-finish-01", "--json")
+	if !replayed.Replayed || replayed.Commit != applied.Commit {
+		t.Fatalf("metadata replay failed: %+v", replayed)
+	}
+
+	rc, out, stderr := c.call(nil, "metadata", "get", path, "/status", "--json")
+	if rc != 0 {
+		t.Fatalf("metadata get: exit=%d out=%s err=%s", rc, out, stderr)
+	}
+	var got struct {
+		Status string `json:"status"`
+		Value  string `json:"value"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil || got.Status != "ok" || got.Value != "completed" {
+		t.Fatalf("metadata get value: %s, %v", out, err)
+	}
+}
+
+func TestCLIContractMetadataUpdateFailureDoesNotPartiallyChangeDocument(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Activities/atomic.md"
+	before := []byte("---\nstatus: active\ncompleted_at: null\n---\nBody unchanged\n")
+	c.mustCall(t, before, "create", path, "--json")
+	update := []byte(`{"set":{"/status":"completed","/unknown":"value"}}`)
+	rc, out, stderr := c.call(update, "metadata", "update", path, "--json")
+	if rc != 2 || !bytes.Contains(out, []byte("METADATA_TARGET_NOT_FOUND")) {
+		t.Fatalf("expected failed atomic member: %d %s %s", rc, out, stderr)
+	}
+	if got := c.read(t, path); !bytes.Equal(got, before) {
+		t.Fatalf("failed metadata update changed document: %q", got)
+	}
+}
+
+func TestCLIContractMetadataNestedPointerAndRemoval(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Specs/nested.md"
+	before := []byte("---\nbuild.version: old\nbuild:\n  version: old\nobsolete: remove-me\nitems: [first, second]\n---\nText\n")
+	c.mustCall(t, before, "create", path, "--json")
+	changed := c.mustCall(t, nil, "metadata", "set", path, "/build/version", "new", "--json")
+	if changed.Status != "applied" {
+		t.Fatalf("nested set: %+v", changed)
+	}
+	removed := c.mustCall(t, nil, "metadata", "remove", path, "/obsolete", "--json")
+	if removed.Status != "applied" {
+		t.Fatalf("remove: %+v", removed)
+	}
+	expected := []byte("---\nbuild.version: old\nbuild:\n  version: \"new\"\nitems: [first, second]\n---\nText\n")
+	if got := c.read(t, path); !bytes.Equal(got, expected) {
+		t.Fatalf("unexpected nested mutation: %q", got)
+	}
+
+	rc, out, _ := c.call(nil, "metadata", "get", path, "/items/1", "--json")
+	if rc != 0 || !bytes.Contains(out, []byte(`"value":"second"`)) {
+		t.Fatalf("read nested list value: %d %s", rc, out)
+	}
+	rc, out, _ = c.call(nil, "metadata", "set", path, "/items/0", "other", "--json")
+	if rc != 2 || !bytes.Contains(out, []byte("UNSUPPORTED_METADATA")) {
+		t.Fatalf("positional writes must not silently proceed: %d %s", rc, out)
+	}
+}
+
+func TestCLIContractMetadataRejectsUnsupportedYAMLWithoutRewrite(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	for _, tc := range []struct {
+		name, text string
+	}{
+		{"duplicate", "---\nstatus: active\nstatus: draft\n---\nBody\n"},
+		{"alias", "---\nstatus: &state active\nother: *state\n---\nBody\n"},
+		{"bad syntax", "---\nstatus: [unterminated\n---\nBody\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "Activities/" + strings.ReplaceAll(tc.name, " ", "-") + ".md"
+			initial := []byte(tc.text)
+			c.mustCall(t, initial, "create", path, "--json")
+			rc, out, _ := c.call(nil, "metadata", "set", path, "/status", "completed", "--json")
+			if rc != 2 || !(bytes.Contains(out, []byte("UNSUPPORTED_METADATA")) || bytes.Contains(out, []byte("INVALID_METADATA"))) {
+				t.Fatalf("unsafe YAML accepted: %d %s", rc, out)
+			}
+			if got := c.read(t, path); !bytes.Equal(got, initial) {
+				t.Fatalf("unsafe YAML changed: %q", got)
+			}
+		})
+	}
+}
