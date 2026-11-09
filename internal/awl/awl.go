@@ -101,6 +101,9 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		c.explicit = args[1]
 		args = args[2:]
 	}
+	if exit, handled := c.handleInfo(args); handled {
+		return exit
+	}
 	if len(args) == 0 {
 		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, metadata, or apply"))
 	}
