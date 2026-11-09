@@ -247,6 +247,15 @@ Pointers traverse maps by **literal string keys** and arrays by **zero-based ind
 - `metadata.append`: append one value to an existing sequence, without overloading `/-` in `metadata.set`.
 - `metadata.remove`: remove a mapping key or a sequence element; later sequence indices shift left. This differs from setting YAML `null`.
 
+**Owner-selected CLI simplification (2026-11-09; not implemented):** expose one future `awl metadata insert` command for sequence insertion, including the append-at-end case. Do **not** expose a separate `awl metadata append` subcommand. Illustrative path-based CLI usage:
+
+~~~sh
+awl metadata insert Activities/example.md /tags/1 new
+awl metadata insert Activities/example.md /tags/- new
+~~~
+
+In the CLI illustration, `/-` means **insert at the end of the existing sequence**, not a readable element and not an append mode for `metadata set`. This reuses one user-facing verb while **preserving the distinct logical behaviors** of indexed insertion and append described above. The CLI may map them to separate internal operations; no new generic mutation framework or command aliases are required. Neither form is implemented in the experimental Go CLI. Sequence position preconditions, safe concurrent writes and final typed-value input syntax must be resolved before implementation.
+
 Illustrative insertion:
 
 ~~~yaml
