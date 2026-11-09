@@ -229,16 +229,16 @@ func validateMetadataEdits(edits []metadataEdit) error {
 			return fail("UNSUPPORTED_METADATA", "YAML root mutation is not supported")
 		}
 		switch edit.Action {
-		case "set":
+		case "set", "insert":
 			if len(edit.Value) == 0 || !json.Valid(edit.Value) {
-				return fail("INVALID_METADATA_INPUT", "metadata set requires a typed JSON value")
+				return fail("INVALID_METADATA_INPUT", "metadata set/insert requires a typed JSON value")
 			}
 		case "remove":
 			if len(edit.Value) != 0 {
 				return fail("INVALID_METADATA_INPUT", "metadata remove must not include a value")
 			}
 		default:
-			return fail("INVALID_METADATA_INPUT", "supported metadata edits are set and remove")
+			return fail("INVALID_METADATA_INPUT", "supported metadata edits are set, insert and remove")
 		}
 	}
 	return nil
@@ -253,6 +253,16 @@ func metadataApply(contents []byte, edits []metadataEdit) ([]byte, error) {
 		fm, err := parseYAMLFrontmatter(working)
 		if err != nil {
 			return nil, err
+		}
+		if edit.Action == "insert" {
+			working, err = fm.insertSequence(edit.Pointer, edit.Value)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := parseYAMLFrontmatter(working); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		node, key, parent, positional, err := fm.target(edit.Pointer)
 		if err != nil {
@@ -403,6 +413,11 @@ func metadataTargetsStable(before, after []byte, edits []metadataEdit) bool {
 		return false
 	}
 	for _, edit := range edits {
+		// Sequence indices have no caller-supplied stable identity. Never
+		// rebase an insertion after another writer advances the managed ref.
+		if edit.Action == "insert" {
+			return false
+		}
 		oldValue, _, _, _, oldErr := oldFM.target(edit.Pointer)
 		newValue, _, _, _, newErr := newFM.target(edit.Pointer)
 		if oldErr != nil || newErr != nil || oldValue.Kind != newValue.Kind ||
