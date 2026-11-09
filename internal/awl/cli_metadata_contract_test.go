@@ -154,9 +154,9 @@ func TestCLIContractMetadataSetRequiresUnambiguousInputs(t *testing.T) {
 	initial := []byte("---\nstatus: active\ncompleted_at: null\n---\nBody\n")
 	c.mustCall(t, initial, "create", path, "--json")
 	for _, tc := range []struct {
-		name string
+		name  string
 		input []byte
-		args []string
+		args  []string
 	}{
 		{"missing value", nil, []string{"metadata", "set", path, "/status", "--json"}},
 		{"missing map input", nil, []string{"metadata", "set", path, "--json"}},
