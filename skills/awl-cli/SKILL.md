@@ -7,11 +7,11 @@ description: Use when operating the experimental awl CLI to initialize an explic
 
 Use this skill to operate the **experimental** `awl` executable. It manages Markdown documents in a **separate bare Git repository**, using the current source Git worktree to resolve project context. It does not write documents into the source working tree.
 
-This skill documents behavior on the stacked experimental metadata branch (PR #9 on PR #7), not a stable release contract.
+This skill describes the experimental CLI implementation now merged into `main` (PR #7: local Git-backed commands; PR #9: metadata; PR #10: help/version). These merges do not establish a stable release contract.
 
 ## Before running commands
 
-1. Confirm `command -v awl` succeeds in the agent's execution environment. This build has no `awl --version` command; do not use that flag as a health check.
+1. Confirm `command -v awl` succeeds in the agent's execution environment. Use `awl --version` to inspect the build identifier and `awl --help` to discover commands; both work without an initialized project. A development or VCS-derived version is not proof of a supported release.
 2. Run commands from the relevant source Git repository or its linked worktree. A leading `--project <slug>` can check the current project identity; it cannot discover an unrelated project.
 3. For an existing project, run `awl ls --json` and check the returned `project` and `revision`. Do **not** run `awl init` automatically when the project is not initialized.
 4. Before writing, establish that the user authorized this project and operation; Git author name/email must be available for audited mutations.
@@ -37,7 +37,7 @@ This skill documents behavior on the stacked experimental metadata branch (PR #9
 
 ## Reference files
 
-- [Command reference](references/commands.md): `init`, `remote add`, `ls`, `read`, `create`, `edit`, `apply`; responses and retries.
+- [Command reference](references/commands.md): `--help`, `--version`, `init`, `remote add`, `ls`, `read`, `create`, `edit`, `apply`; responses and retries.
 - [Metadata reference](references/metadata.md): `get`, `set`, `insert`, `remove`; RFC 6901 pointers, typed values, preservation and unsupported YAML.
 
-Source of current experimental behavior: `cmd/awl`, `internal/awl`, and `docs/experiments/` in this repository. Recheck those files when working against a different CLI revision.
+Source of current experimental behavior: `cmd/awl`, `internal/awl` (including `cli_info.go`), and `docs/experiments/` in this repository. Recheck those files when working against a different CLI revision.
