@@ -1,8 +1,8 @@
-# awl YAML metadata reference (experimental)
+# awl YAML metadata reference
 
 The `awl metadata` command group operates on YAML frontmatter in documents already stored in the managed Git repository. `awl edit` remains body-only.
 
-This is a **conservative existing-structure subset**, not a general-purpose YAML editor. The implementation attempts byte-local changes and validates the resulting YAML; unsafe layouts are rejected.
+Metadata mutation supports a **conservative existing-structure subset**, not arbitrary YAML rewriting. Changes are byte-local where supported; unsupported or unsafe layouts are rejected.
 
 ## Read a value
 
