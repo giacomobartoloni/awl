@@ -261,7 +261,7 @@ func metadataApply(contents []byte, edits []metadataEdit) ([]byte, error) {
 		if positional {
 			return nil, fail("UNSUPPORTED_METADATA", "positional list writes need defined concurrency preconditions")
 		}
-		if node.Kind != yaml.ScalarNode || key == nil || parent == nil || parent.Kind != yaml.MappingNode {
+		if node.Kind != yaml.ScalarNode || key == nil || parent == nil || parent.Kind != yaml.MappingNode || parent.Style&yaml.FlowStyle != 0 {
 			return nil, fail("UNSUPPORTED_METADATA", "this increment changes existing mapping scalar values only")
 		}
 		if edit.Action == "set" {
@@ -336,17 +336,13 @@ func (fm *yamlFrontmatter) replaceScalar(node *yaml.Node, typedJSON json.RawMess
 	if valueEnd <= offset {
 		return nil, fail("UNSUPPORTED_METADATA", "cannot identify scalar token")
 	}
-	var decoded any
-	if err := json.Unmarshal(typedJSON, &decoded); err != nil {
+	var formatted bytes.Buffer
+	if err := json.Compact(&formatted, typedJSON); err != nil {
 		return nil, fail("INVALID_METADATA_INPUT", "invalid JSON metadata value")
 	}
-	formatted, err := json.Marshal(decoded)
-	if err != nil {
-		return nil, fail("INVALID_METADATA_INPUT", "cannot encode JSON metadata value")
-	}
-	out := make([]byte, 0, len(fm.contents)-valueEnd+offset+len(formatted))
+	out := make([]byte, 0, len(fm.contents)-valueEnd+offset+formatted.Len())
 	out = append(out, fm.contents[:start+offset]...)
-	out = append(out, formatted...)
+	out = append(out, formatted.Bytes()...)
 	out = append(out, fm.contents[start+valueEnd:]...)
 	return out, nil
 }
