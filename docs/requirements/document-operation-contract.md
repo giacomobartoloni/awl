@@ -37,7 +37,7 @@ CLI syntax, Git object/branch layout, service/MCP interfaces, Git libraries, aut
 | Content | Full raw Markdown, potentially including YAML frontmatter | Read results should not silently normalize bytes |
 | Body | Markdown content outside YAML frontmatter, when it can be recognized | Text editing versus raw-document editing scope remains open |
 | Metadata | YAML values in frontmatter | Arbitrary keys/types; no domain-specific interpretation |
-| Document revision | Opaque local state identifier returned with a read | May be used to detect or recover from stale edits; concrete Git mapping TBD |
+| Document revision | Opaque local state identifier returned with a read | Useful for history, diagnostics and optionally pinned reads; awl resolves write revisions internally and does not accept caller-supplied file revisions in mutations |
 | Request ID | Correlation identifier for one submitted operation or composite | Identity source/generation and retry semantics TBD |
 | Operation ID | Identifier for one member of a composite | Enables ordered, per-operation reporting |
 | Local commit | State accepted and retained by managed local Git | Not necessarily published to the remote Git hub |
@@ -56,7 +56,7 @@ This table describes **behavioral operations**, not finalized public method name
 | `document.list` | Project slug, optional relative prefix | Document paths and optional revisions | Unknown project, invalid prefix |
 | `document.read` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
 | `document.create` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
-| `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe stale edit |
+| `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits; no caller-supplied file revision | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe edit |
 | `metadata.get` | Project slug, path, JSON Pointer | Typed frontmatter value + document revision | Missing target; malformed/ambiguous YAML |
 | `metadata.set` | Project slug, path, JSON Pointer and typed YAML value | Replace existing value, never implicit list insertion | Missing target, unsafe index, parsing failure |
 | `metadata.remove` | Project slug, path, JSON Pointer | Remove map entry or list element (shifts later indexes) | Unverifiable stale position, malformed YAML |
@@ -84,7 +84,6 @@ Candidate request envelope:
       "id": "edit-outcome",
       "op": "document.edit",
       "path": "Activities/example.md",
-      "base_revision": "rev-example-1",
       "edits": [
         {
           "old_string": "Pending verification.",
@@ -96,7 +95,7 @@ Candidate request envelope:
 }
 ~~~
 
-The same operation model can be submitted as a single action or within a composite. A one-operation wrapper is an illustrative transport choice, not a required JSON schema.
+The same operation model can be submitted as a single action or within a composite. A one-operation wrapper is an illustrative transport choice, not a required JSON schema. **No mutation request or composite member accepts a file revision parameter.** The `request_id` above identifies the request for correlation; it is not a file version.
 
 ### Common response information
 
@@ -131,13 +130,15 @@ Example successful local response (illustrative values and serialization):
 
 ### Revision visibility
 
-A read returns the local revision used to produce its content. Later writes may refer to that revision.
+A read returns the local revision used to produce its content. This revision can support history, diagnostics and revision-pinned **reads**, but it is **not a write input**.
 
-**Selected policy for body editing:** a stale `base_revision` does **not by itself** force failure or a reread. The exact target must be uniquely found in the **current Markdown body**, and awl must be able to establish that applying the requested replacement is safe. Otherwise return `TARGET_NOT_FOUND`, `AMBIGUOUS_MATCH` or `REVISION_CONFLICT`. No fuzzy matching or blind last-writer-wins fallback.
+**Owner-confirmed write contract (2026-11-04):** No awl mutation operation, including `document.edit`, `document.create`, `metadata.*`, or members of `composite.apply`, requires or accepts a caller-supplied file revision, SHA, `base_revision`, or `expected_revision`. Callers describe the intended document/metadata operation; awl reads the current managed state and owns revision checks and internal retry orchestration. An edit must not fail solely because the caller did not provide a revision.
 
-The exact safety condition for "still safely applicable" needs focused design and tests; simple string uniqueness does not prove semantic correctness. Strict revision preconditions could be an optional mode, while contextual patch/rebase/three-way merge remains deferred.
+**Selected body-edit behavior:** the exact target must be uniquely found in the **current Markdown body**, and awl must establish that replacement is safe. Otherwise return `TARGET_NOT_FOUND`, `AMBIGUOUS_MATCH`, or a document-level conflict. No fuzzy matching, blind last-writer-wins fallback, or silent semantic reinterpretation. Prior content observed by the caller may be stale, but no caller-provided revision is needed.
 
-This stale-body-edit policy must not be presumed safe for all metadata edits, particularly numeric indexes into changed YAML sequences.
+The exact safety condition for "still safely applicable" needs focused design and tests; simple string uniqueness does not prove semantic correctness. Context/anchors as part of the **edit intent** may be considered later, but no file revision precondition may be added to the mutation interface.
+
+This safe exact-body-edit policy does not automatically apply to numeric indexes into changed YAML sequences. Positional metadata mutations may need an explicit *content- or element-based* condition that identifies the intended target/position, **never** a file revision token. If intent cannot be verified, fail safely; do not silently move or overwrite elements.
 
 ## 5. Reading documents
 
@@ -187,7 +188,6 @@ Example (illustrative):
 id: finish-outcome
 op: document.edit
 path: Activities/example.md
-base_revision: rev-example-1
 edits:
   - old_string: "Pending verification."
     new_string: "Implementation completed."
@@ -195,9 +195,9 @@ edits:
     new_string: "## Follow-up\nNo further action required."
 ~~~
 
-The old revision can be stale, but the current body target must still be safely and uniquely applicable. An edit matching text **only inside frontmatter** is reported as missing; it must never edit YAML by accident.
+The caller's previously observed content may be stale, but the current body target must still be safely and uniquely applicable. No revision reference is passed to the edit. A target matching text **only inside frontmatter** is reported as missing; it must never edit YAML by accident.
 
-**Deferred:** context-aware unified diffs, line/hash anchors, three-way merge, strict-conditional mode syntax and permitted automatic retries. Body/frontmatter boundary detection for malformed documents still requires a documented policy.
+**Deferred:** context-aware unified diffs, line/hash anchors, and three-way merge. Automatic retry policy is evaluated in the [configuration/worktree design](../design/2026-11-04-project-config-and-worktree-resolution.md); safe guarded internal retry is preferred, but no caller-supplied revision precondition is permitted. Body/frontmatter boundary detection for malformed documents still requires a documented policy.
 
 ## 7. Generic frontmatter metadata
 
@@ -247,6 +247,15 @@ Pointers traverse maps by **literal string keys** and arrays by **zero-based ind
 - `metadata.append`: append one value to an existing sequence, without overloading `/-` in `metadata.set`.
 - `metadata.remove`: remove a mapping key or a sequence element; later sequence indices shift left. This differs from setting YAML `null`.
 
+**Owner-selected CLI simplification (2026-11-09; not implemented):** expose one future `awl metadata insert` command for sequence insertion, including the append-at-end case. Do **not** expose a separate `awl metadata append` subcommand. Illustrative path-based CLI usage:
+
+~~~sh
+awl metadata insert Activities/example.md /tags/1 new
+awl metadata insert Activities/example.md /tags/- new
+~~~
+
+In the CLI illustration, `/-` means **insert at the end of the existing sequence**, not a readable element and not an append mode for `metadata set`. This reuses one user-facing verb while **preserving the distinct logical behaviors** of indexed insertion and append described above. The CLI may map them to separate internal operations; no new generic mutation framework or command aliases are required. Both CLI forms are implemented as a **bounded experiment in draft PR #9** for single-line flow lists and simple scalar block lists. `metadata insert` accepts positional strings or typed JSON input, but still refuses complex list layouts and unsafe source spans. A failed Git compare-and-swap cannot automatically rebase an insertion. **Preconditions proving the caller's intended position on an already stale list are still unresolved**; indexed insertion is not approved as production-safe until that design is reviewed.
+
 Illustrative insertion:
 
 ~~~yaml
@@ -257,7 +266,7 @@ index: 1
 value: {name: Charlie, roles: [reviewer]}
 ~~~
 
-**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. For stale positional writes, require a verifiable revision or a sufficiently strong explicit precondition that identifies the intended element/position; otherwise return `REVISION_CONFLICT`. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. The relaxed stale exact-target behavior of body edits does not extend automatically to indexed metadata writes.
+**Concurrent-list safety:** an unchanged numeric pointer does not prove its referenced list element is still the same one. The caller never supplies a file revision. For a positional mutation whose intended element or position cannot be verified from the operation's explicit content/element conditions against the current state, return an actionable conflict rather than guessing. A scalar expected-value check alone can be insufficient where duplicate entries exist. Do **not** auto-reposition a stale list edit by searching for similar content. Earlier successful composite operations can shift positions used by later operations; each is evaluated against the current staged state. Internal Git revision comparisons protect concurrent commit publication but do not replace semantic safety checks on list positions.
 
 **Open details:** exact public syntax, absent map-leaf behavior, expected/precondition representation, root replacement, missing-key removal, YAML tags/aliases/anchors/non-string keys and formatting-preserving serialization. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md). This selects a path standard and safety principle, **not** an implementation library or full JSON Patch semantics.
 
@@ -267,9 +276,13 @@ A composite is **one request containing ordered, heterogeneous operations**; it 
 
 **Owner-selected execution policy: continue after each operation failure.** Every operation is attempted in declared order unless a request-level fatal error prevents further execution. Later operations observe successfully staged earlier changes, even when an intermediate operation fails. A failed operation contributes **no** partial modification of its own.
 
-**Owner-selected commit granularity: one local Git content commit per request.** If at least one operation produces a valid content change, all successful staged changes are represented by **one** local Git commit after processing the request. If all operations fail or produce no changes, no empty content commit is required; the outcomes still need auditable representation.
+**Owner-selected commit granularity (updated 2026-11-06): one audited Git commit per locally completed mutating request.** If at least one operation produces a valid content change, all successful staged changes and ordered operation outcomes are represented by **one content-changing Git commit**. If all members fail ordinarily or the completed request makes no document change, publish **one audit-only Git commit with the same document tree**. This audit-only commit is not a content-changing commit. The distinct fatal concurrent-publication rejection produces **no commit of any kind** and is not a completed/published request.
 
 This is not an ACID transaction mechanism and does not require rollback across separately accepted requests. If final Git persistence fails, **none** of the staged operations may be reported as durably `applied`; a failure/uncertain outcome must be returned with recoverable diagnostics. The handling of interruption and retry IDs remains open.
+
+**Owner-selected request-level concurrency rule (2026-11-06):** If the managed local head changes while the request is being prepared, awl may revalidate and rebuild the **whole original request** only when the intended modifications remain provably safe. If a concurrent same-target, YAML position, rename/delete or similar conflict cannot be resolved safely, **abort the entire request before publication without creating any commit for it, including an audit-only commit**. None of its staged document edits may become visible, even when some composite members had provisionally succeeded. Return an explicit request-level conflict instructing the coding agent to **reread the current documents and submit revised operations**. This fatal publication conflict is **not** an ordinary per-member error and does **not** change the continue-on-member-error rule.
+
+This guarantee is scoped to the **local** request publication boundary. A later rejected remote push does not undo an already acknowledged local commit. It remains pending/conflicted in synchronization status. Git private staging, optional micro-worktrees and ref-CAS/lock choices remain implementation proposals, not part of the public operation grammar. See [request conflict proposal](../architecture/2026-11-06-request-conflict-rejection-proposal.md).
 
 Example request:
 
@@ -327,13 +340,16 @@ Proposed error categories (names subject to interface review):
 | `INVALID_METADATA` | YAML cannot be parsed or changed safely | No affected-document mutation |
 | `TARGET_NOT_FOUND` | Exact edit target absent | No affected-operation mutation |
 | `AMBIGUOUS_MATCH` | Exact target occurs more than allowed | No affected-operation mutation |
-| `REVISION_CONFLICT` | Revision or patch intent cannot safely be reconciled | No silent replacement |
+| `REVISION_CONFLICT` | Revision or patch intent cannot safely be reconciled | No silent replacement; ordinary per-member failure unless a request-level concurrent publication conflict is established |
+| `CONCURRENT_REQUEST_CONFLICT` (illustrative) | Concurrent local head change makes the **whole request's** staged intent unsafe to publish | Abort the request; **no document change and no commit of any kind for the rejected request**; caller rereads/resubmits |
 | `PERMISSION_DENIED` | Operation outside authorized scope | No mutation |
 | `LOCAL_PERSISTENCE_FAILED` | Git commit/state durability cannot be confirmed | No reported success; state may need recovery |
 | `REMOTE_PUBLICATION_FAILED` | Central Git publication did not succeed | Local commit remains visible and pending; local success must not be rewritten as failure |
 | `UNKNOWN_OUTCOME` | A requested action's final state cannot be determined safely | Expose uncertainty and allow inspection; never retry destructively without checks |
 
-Each error should include project/path/operation identifiers where known and safe to disclose. The mapping to process exit codes, stderr, JSON output and later remote-tool errors remains to be designed.
+Each error should include project/path/operation identifiers where known and safe to disclose. The mapping to process exit codes, stderr, JSON output and later remote-tool errors remains to be designed. For a **request-level concurrency error**, report `document_changes_published: false` or equivalent; do not report provisional composite member successes as committed. A changed retry payload must use a new stable request ID when idempotency keys are in use. The exact error symbol and response fields above are illustrative, **not an approved CLI schema**.
+
+**Owner-confirmed audit scope (2026-11-06):** A locally **completed mutating request** receives one durable shared-Git audit-bearing commit even if all operations fail ordinarily or make no change; use an **audit-only commit** in those cases. A request rejected at the local concurrency/publication boundary produces **no commit at all**, and its error response is not durably recorded in shared Git history. An invalid request rejected **before execution begins** also produces no commit under the initial proposed boundary. Failed members of a published composite are included in the same complete audit record. A failure/crash with **unknown publication outcome** must be investigated before returning a definitive conflict/no-commit result. Exact request admission rules, schema and recovery semantics remain to design.
 
 Reject path traversal, unsafe absolute paths and unsupported symlink/path escapes where applicable. Do not overwrite documents on create or silently rewrite legacy markup.
 
@@ -346,7 +362,11 @@ The operation layer must be able to describe:
 3. **Git publication:** whether corresponding history is pending, published, blocked or uncertain.
 4. **Satellites (if configured):** their independent projection status, **without requiring a connector to run locally**.
 
-Audit representation, retention, where failed requests are recorded, and whether the audit is replicated into the central Git hub remain explicit open issues. Git history provides versioning but cannot substitute for these application-level records.
+**Owner-selected execution boundary (2026-11-06):** local modifying requests commit and reply without waiting for network Git synchronization or derived index refresh. The initial CLI will offer **explicit invocations** for remote Git synchronization and index refresh/repair, each recoverable on subsequent invocation; this is *logical deferral*, not a daemon, persistent queue or fire-and-forget subprocess contract. A caller that explicitly invokes a sync/index operation may wait for that operation's completion. No `git pull` invoked implicitly inside `qmd update`; awl owns Git fetch/reconcile/push and QMD, if selected, only manages a derived search index. No automatic execution is promised after every awl process exits.
+
+**Status/consistency:** surface independently (i) last locally acknowledged Git request revision, (ii) remote revision/acknowledgement last **actually verified** and pending/conflicted/unknown state, and (iii) latest successfully indexed **content tree** and freshness; semantic vector readiness may lag lexical freshness. An audit-only commit advances the Git history but leaves its document tree unchanged, so content reindexing is unnecessary solely for that audit commit. A remote push failure never rolls back local acceptance; an index refresh failure never contaminates authoritative documents. Repeated explicit sync/refresh invocations must re-evaluate the latest state and avoid duplicated request audit or stale/current misrepresentation. Concrete CLI names and persistence/checkpoint mechanisms remain to design.
+
+The owner selected compact, versioned **operation-level audit inside Git commit messages**, avoiding tracked audit files per request. **One audit-only commit is required for completed no-op/all-failed mutating requests**, while a **whole request rejected for a concurrent publication conflict creates none**. Exact schema, request admission, retention, Git durability and remote replication need design and tests; no implementation is claimed. Local acceptance remains separate from remote publication.
 
 ## 11. Candidate acceptance examples
 
@@ -386,6 +406,15 @@ Audit representation, retention, where failed requests are recorded, and whether
 | OP-AC-32 | An existing empty document is read | Valid empty read, not DOCUMENT_NOT_FOUND | FR-04 |
 | OP-AC-33 | An excerpt includes frontmatter lines followed by a body edit | document.edit remains body-only | FR-05, FR-06 |
 
+Additional owner-confirmed revision-free-write acceptance cases (2026-11-04; not implemented):
+
+| ID | Scenario | Expected outcome | Source |
+| --- | --- | --- | --- |
+| OP-AC-34 | Call `document.edit` without first reading or passing any file revision | awl resolves the current local state and either applies the uniquely safe edit or returns a target/content-level error | Owner-confirmed write-interface boundary |
+| OP-AC-35 | Call `metadata.set`, `metadata.insert`, or `metadata.remove` without any file revision | awl validates operation intent against current YAML; unsafe ambiguous list positions fail without a revision-token workaround | Owner-confirmed write-interface boundary |
+| OP-AC-36 | Two agents modify different documents without revision parameters | Internal CAS/revalidation can complete both safely; no raw Git error or caller-managed retry | Transparent Git orchestration requirement |
+| OP-AC-37 | Read with an optional pinned revision, then modify without passing that revision | Read continuation retains its pin, while the mutation independently resolves current state and applies safe operation rules | Read versus write separation |
+
 These are **specification-level acceptance scenarios**, not implemented test results.
 
 ## 12. Open design questions and review gates
@@ -393,20 +422,24 @@ These are **specification-level acceptance scenarios**, not implemented test res
 ### Decisions recorded from the project owner
 
 1. `document.edit` changes the Markdown **body only**.
-2. An obsolete read revision may still yield a safe exact-target body edit without forcing a new read.
+2. **2026-11-04:** callers never pass a file revision when modifying documents or metadata. awl manages revisions and safe retries internally; prior reads may be stale without requiring a caller-managed version token.
 3. Composite execution **continues** after member errors, reporting each outcome.
 4. One Git **content commit per request** records all successful changes.
 5. JSON Pointer is the canonical nested-YAML locator; reading, replacement, list insertion, append and removal have distinct semantics and stale positional list edits require safety checks.
 6. `document.read` uses **1-based absolute file lines including frontmatter**, supports an **optional pinned local revision** across pages, and **reports incompleteness/continuation explicitly**.
 7. **2026-11-04:** project-scoped Markdown indexing and lexical, semantic and hybrid document search are **core** capabilities; structured metadata search is **deferred**, without changing YAML-frontmatter document operations. QMD is a candidate, not a selected dependency.
+8. **2026-11-06:** when a concurrent local publication conflict is not safely resolvable, the **whole request** is aborted with **no commit, including no audit-only commit**. The coding agent rereads and resubmits revised edits. Ordinary per-member composite failures continue as previously selected; a remote-only push rejection cannot roll back locally acknowledged work.
+9. **2026-11-06:** choose **Go** for the initial CLI implementation with **external Git CLI** commands (not an embedded Git library), retaining structured, shell-free invocation. Concrete syntax, packaging, supported platforms and Git version gates require verification.
+10. **2026-11-06:** every **completed mutating request**, including ordinary all-failed/no-op requests, is published with **one audit-bearing commit**; use an **audit-only commit** if the user document tree is unchanged. This does not alter decision 8's no-commit concurrent conflict exception.
+11. **2026-11-06:** initial remote Git synchronization and derived index refresh are **explicit, later-recoverable CLI operations**, decoupled from the local request commit; **no mandatory background worker, daemon, scheduler, or automatically executing job queue**. The operations themselves may run synchronously for the caller that explicitly invokes them.
 
 ### Review next
 
 1. **Nested YAML paths:** RFC 6901 JSON Pointer is selected as the canonical locator. Only operation field names, YAML round-trip limitations, index preconditions and error semantics remain open. See [research](../research/2026-10-23-yaml-paths-and-partial-reads.md).
 2. **Partial reads:** the owner accepted the **1-based absolute-file coordinate system (including frontmatter)**, optional revision-pinned continuation and explicit truncation/continuation semantics. [Comparative research](../research/2026-10-23-partial-read-agent-conventions.md). Numerical limits, public command/wire syntax and long-line fallback remain open.
-3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, and optional strict revision preconditions.
-4. **Audit:** define durable capture of failed/no-op requests separately from Git content commits.
-5. **Composite implementation:** fatal request-level errors, interrupted commit handling, idempotent retries, and final outcome reporting.
+3. **Stale edits:** specify what "safe to apply" means beyond exact uniqueness, without caller-supplied file revision tokens. Define content/element-based conditions for positional YAML mutations.
+4. **Audit:** durable **audit-only commits** for completed all-failed/no-op mutating requests are now owner-selected. Define full message schema, request admission, expected-old-ref publication, idempotent recovery, retention and scalable lookup; do not redefine the concurrent rejection exception.
+5. **Composite implementation:** the **fatal request-level concurrency boundary and audit-only completed-request behavior are owner-confirmed**; their detection/revalidation algorithm, interrupted-commit handling, idempotent retries, and final outcome reporting remain to design and verify.
 6. **Search/indexing:** define result identity and ranking, query modes, indexing/refresh lifecycle, revision freshness and offline-model failure behavior. Decide whether frontmatter is indexed as ordinary text or excluded, and evaluate [QMD](../research/2026-11-04-qmd-search-and-indexing-assessment.md) without assuming metadata filters or a specific runtime.
 
 ### Explicitly defer
@@ -421,3 +454,70 @@ These are **specification-level acceptance scenarios**, not implemented test res
 This document is a proposal added to an **unmerged GitHub draft PR**, not an approved operation specification. It narrows the interface discussion without locking implementation choices.
 
 **Suggested next task:** Review the search/indexing interface requirements and run a bounded QMD feasibility evaluation on representative local Markdown, while keeping existing nested-YAML and partial-read safety questions open. No code or tests are claimed by this document.
+
+
+## 14. CLI-first harness integration — owner-confirmed direction, proposed interface details (2026-11-04)
+
+**Owner-confirmed product decision (2026-11-04):** awl is an independent, **CLI-first and harness-agnostic** application optimized for both human terminal users and coding agents using authorized shell tools. It must not require MCP, a daemon, an SDK or harness-specific adapters. Its Git orchestration must remain transparent and write requests must not require caller-supplied file revisions. The **specific command names, flag spellings, serialized input/output envelopes, numeric exit codes and integrations below remain proposals**, not approved interfaces or implemented behavior.
+
+**Approved direction versus proposals:** A shell-executable, non-interactive, automation-friendly CLI is a product constraint. JSON on demand, structured stdin for composites, stdout/stderr separation, bounded outputs, documented error categories and CLI usability tests are recommended implementation-level contracts to refine. Do not interpret the examples below as an approved public command syntax.
+
+### How coding-agent harnesses execute awl
+
+Codex, Claude Code and OpenCode can delegate shell commands to their runtimes when shell access is configured and permitted. The harness, not awl, handles tool selection, execution permissions, current directory, command timeout and returning process results to the model. A dedicated harness wrapper is optional; it should invoke the **same CLI behavior**, not implement a separate Git/document protocol.
+
+An agent in a source worktree should be able to call `awl` from that worktree without specifying source Git common directories, managed repository paths or file revisions. All managed Markdown mutations must pass through awl, not an agent's generic filesystem Edit/Write tool aimed at awl's private managed Git repository.
+
+### Candidate CLI surface
+
+```sh
+# Illustrative names/flags only, not an approved public syntax.
+awl read Activities/example.md --start-line 1 --max-lines 100 --format json
+awl edit Activities/example.md --old "Pending verification." --new "Completed." --format json
+awl search "git worktree config" --mode lexical --format json
+awl status --format json
+```
+
+For large or multiline bodies and composites, prefer **one structured stdin request** instead of generating two temporary files or forcing an LLM to escape nested shell strings:
+
+```sh
+awl apply --input - --format json <<'JSON'
+{
+  "operations": [
+    {
+      "id": "change-outcome",
+      "op": "document.edit",
+      "path": "Activities/example.md",
+      "edits": [{"old_string": "Pending verification.", "new_string": "Completed."}]
+    }
+  ]
+}
+JSON
+```
+
+These illustrative commands **do not** accept a file revision argument. Accepting stdin is a candidate to be validated against simple one-operation flags and file-backed payloads. JSON is recommended for composite/machine inputs; raw Markdown via stdin may eventually be useful for creates, but incompatible stdin modes must not be ambiguous.
+
+### Candidate process contract for reliable automation
+
+- **Non-interactive by default for commands used by agents:** do not launch an editor, pager, prompt, progress spinner or terminal UI when stdin/stdout is non-TTY. Missing required input produces a deterministic diagnostic and nonzero exit code. Human-focused interactive UX, if any, is separate and opt-in.
+- **Explicit output mode:** machine-readable structured JSON when requested, with a stable envelope for success, partial composite results, failure, local-durability state, and remote-publication state. Human default output should be concise. Do not mix Git logs, ANSI colors, warnings or streaming progress into JSON stdout.
+- **Stream boundaries:** stdout contains the documented command result; stderr contains actionable diagnostics. For JSON output, even failed commands should return a structured final result on stdout when possible; stderr must not be the only error source. Suppress secrets and avoid echoing whole user-owned documents in errors.
+- **Exit codes:** distinguish full success, partial composite completion, validation/semantic conflict, unavailable project/local storage, and infrastructure/remote failures at a stable **small category** level. Do not assign exact integer codes or promise all partial results are success. The output `error.code` contains the detailed cause.
+- **Input safety:** use unambiguous project-relative document paths; validate scope and symlinks; parse data as data (no shell evaluation, YAML executable tags, command substitution, or arbitrary hooks). Prefer structured stdin to huge CLI flags and sensitive values in process arguments.
+- **Predictability:** bounded stdout size and explicit truncation/continuation for document reads, stable ordering of composite member results, actionable content-level conflicts, no mandatory Git SHA or manual CAS retry, no hidden implicit remote push on local edit.
+- **Discovery:** accurate `--help` and usage examples matter more than a large agent-specific instruction framework. Optional short Agent Skills/AGENTS.md integration notes may aid discovery, but no harness-specific runtime dependency is part of core awl.
+
+### Harness evaluation cases (not run)
+
+| ID | Scenario | Proposed expected result |
+| --- | --- | --- |
+| CLI-AC-01 | Agent executes awl from a nested directory of one linked worktree | awl resolves current source context and canonical shared local state |
+| CLI-AC-02 | Agent edits a Markdown body without an explicit file revision | Safe targeted update or actionable domain conflict; no Git orchestration exposed |
+| CLI-AC-03 | Agent submits multiline/composite JSON through stdin with no TTY | Parsing is deterministic; one request with ordered member outcomes and one content commit for accepted changes |
+| CLI-AC-04 | Operation returns a content conflict or partial composite outcome | Distinguishable exit status plus valid structured diagnostic without ANSI/noise |
+| CLI-AC-05 | Local write succeeds when remote Git is unreachable | Report local persistence succeeded and remote publication is pending, not a false total failure |
+| CLI-AC-06 | An agent has only read permissions or shell permission is denied by its harness | awl does not bypass the harness or attempt an alternative unapproved mutation path |
+
+**Scope boundary:** MCP server, custom OpenCode/Claude/Codex wrappers, tool schemas, background sync and dedicated SDKs are potential follow-ons, not prerequisites. Validate the shell-only CLI experience with representative tool invocations before adding adapters.
+
+References: [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) · [Claude Bash tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/bash-tool) · [OpenCode tools](https://docs.opencode.ai/docs/tools/) · [OpenCode custom tools](https://opencode.ai/docs/custom-tools/).
