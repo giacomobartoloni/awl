@@ -261,7 +261,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		input := fs.String("input", "-", "typed JSON value or multi-pointer set payload source")
 		rid := fs.String("request-id", "", "stable request ID for retries")
 		if e := fs.Parse(args); e != nil || fs.NArg() < 2 {
-			return c.emitError(fail("USAGE", "metadata requires get, set or remove and a Markdown path"))
+			return c.emitError(fail("USAGE", "metadata requires get, set, insert or remove and a Markdown path"))
 		}
 		action := fs.Arg(0)
 		path, e := safePath(fs.Arg(1))
@@ -319,9 +319,9 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 			}
 		})
 		switch action {
-		case "set":
-			switch fs.NArg() {
-			case 2: // Multiple JSON Pointer values supplied as an object.
+		case "set", "insert":
+			if action == "set" && fs.NArg() == 2 {
+				// Multiple JSON Pointer values supplied in one atomic set.
 				if !hasInput {
 					return c.emitError(fail("USAGE", "metadata set requires a pointer and value or explicit --input"))
 				}
@@ -333,34 +333,34 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 				if e != nil {
 					return c.emitError(e)
 				}
-			case 3: // One pointer with a typed JSON value from --input.
-				if !hasInput {
-					return c.emitError(fail("USAGE", "metadata set requires a value or explicit --input"))
-				}
-				value, err := readInput(c.stdin, *input)
-				if err != nil {
-					return c.emitError(err)
-				}
-				edits = []metadataEdit{{Action: "set", Pointer: fs.Arg(2), Value: value}}
-			case 4: // One pointer and a positional string value.
-				if hasInput {
-					return c.emitError(fail("USAGE", "metadata set cannot combine a positional value with --input"))
-				}
-				value, err := json.Marshal(fs.Arg(3))
-				if err != nil {
-					return c.emitError(err)
-				}
-				edits = []metadataEdit{{Action: "set", Pointer: fs.Arg(2), Value: value}}
-			default:
-				return c.emitError(fail("USAGE", "metadata set accepts path [pointer [value]] with explicit --input when no value is positional"))
+				break
 			}
+			var value []byte
+			switch fs.NArg() {
+			case 3: // Typed JSON value, supplied explicitly via --input.
+				if !hasInput {
+					return c.emitError(fail("USAGE", "metadata "+action+" requires a value or explicit --input"))
+				}
+				value, e = readInput(c.stdin, *input)
+			case 4: // Positional values are always strings, never inferred types.
+				if hasInput {
+					return c.emitError(fail("USAGE", "metadata "+action+" cannot combine positional value with --input"))
+				}
+				value, e = json.Marshal(fs.Arg(3))
+			default:
+				return c.emitError(fail("USAGE", "metadata "+action+" requires a path, pointer and value (or explicit --input)"))
+			}
+			if e != nil {
+				return c.emitError(e)
+			}
+			edits = []metadataEdit{{Action: action, Pointer: fs.Arg(2), Value: value}}
 		case "remove":
 			if fs.NArg() != 3 || hasInput {
 				return c.emitError(fail("USAGE", "metadata remove requires path and pointer without --input"))
 			}
 			edits = []metadataEdit{{Action: "remove", Pointer: fs.Arg(2)}}
 		default:
-			return c.emitError(fail("USAGE", "metadata supports get, set and remove"))
+			return c.emitError(fail("USAGE", "metadata supports get, set, insert and remove"))
 		}
 		if e := validateMetadataEdits(edits); e != nil {
 			return c.emitError(e)
