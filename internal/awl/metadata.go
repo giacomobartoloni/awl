@@ -375,26 +375,23 @@ func (fm *yamlFrontmatter) removeScalarField(key, value *yaml.Node) ([]byte, err
 	return out, nil
 }
 
-func metadataUpdateEdits(data []byte) ([]metadataEdit, error) {
-	var payload struct {
-		Set map[string]json.RawMessage `json:"set"`
+// metadataSetEdits reads a JSON object whose keys are JSON Pointers.
+// Each value uses the same typed JSON representation as a single-field set.
+func metadataSetEdits(data []byte) ([]metadataEdit, error) {
+	var values map[string]json.RawMessage
+	if err := strictJSON(data, &values); err != nil || len(values) == 0 {
+		return nil, fail("INVALID_METADATA_INPUT", "multi-field set expects a nonempty JSON Pointer/value object")
 	}
-	if err := strictJSON(data, &payload); err != nil || len(payload.Set) == 0 {
-		return nil, fail("INVALID_METADATA_INPUT", "update expects JSON object with nonempty set map")
-	}
-	keys := make([]string, 0, len(payload.Set))
-	for key := range payload.Set {
+	keys := make([]string, 0, len(values))
+	for key := range values {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	edits := make([]metadataEdit, 0, len(keys))
 	for _, key := range keys {
-		edits = append(edits, metadataEdit{Action: "set", Pointer: key, Value: payload.Set[key]})
+		edits = append(edits, metadataEdit{Action: "set", Pointer: key, Value: values[key]})
 	}
-	if err := validateMetadataEdits(edits); err != nil {
-		return nil, err
-	}
-	return edits, nil
+	return edits, validateMetadataEdits(edits)
 }
 
 // After a failed Git CAS, do not silently overwrite concurrently changed
