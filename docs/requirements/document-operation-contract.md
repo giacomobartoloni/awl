@@ -254,7 +254,7 @@ awl metadata insert Activities/example.md /tags/1 new
 awl metadata insert Activities/example.md /tags/- new
 ~~~
 
-In the CLI illustration, `/-` means **insert at the end of the existing sequence**, not a readable element and not an append mode for `metadata set`. This reuses one user-facing verb while **preserving the distinct logical behaviors** of indexed insertion and append described above. The CLI may map them to separate internal operations; no new generic mutation framework or command aliases are required. Neither form is implemented in the experimental Go CLI. Sequence position preconditions, safe concurrent writes and final typed-value input syntax must be resolved before implementation.
+In the CLI illustration, `/-` means **insert at the end of the existing sequence**, not a readable element and not an append mode for `metadata set`. This reuses one user-facing verb while **preserving the distinct logical behaviors** of indexed insertion and append described above. The CLI may map them to separate internal operations; no new generic mutation framework or command aliases are required. Both CLI forms are implemented as a **bounded experiment in draft PR #9** for single-line flow lists and simple scalar block lists. `metadata insert` accepts positional strings or typed JSON input, but still refuses complex list layouts and unsafe source spans. A failed Git compare-and-swap cannot automatically rebase an insertion. **Preconditions proving the caller's intended position on an already stale list are still unresolved**; indexed insertion is not approved as production-safe until that design is reviewed.
 
 Illustrative insertion:
 
