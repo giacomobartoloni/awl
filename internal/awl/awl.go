@@ -43,12 +43,13 @@ type member struct {
 	Error  *diagnostic `json:"error,omitempty"`
 }
 type operation struct {
-	ID      string `json:"id"`
-	Op      string `json:"op"`
-	Path    string `json:"path"`
-	Content string `json:"content,omitempty"`
-	Old     string `json:"old,omitempty"`
-	New     string `json:"new,omitempty"`
+	ID       string         `json:"id"`
+	Op       string         `json:"op"`
+	Path     string         `json:"path"`
+	Content  string         `json:"content,omitempty"`
+	Old      string         `json:"old,omitempty"`
+	New      string         `json:"new,omitempty"`
+	Metadata []metadataEdit `json:"metadata,omitempty"`
 }
 type request struct {
 	RequestID  string      `json:"request_id"`
@@ -101,11 +102,11 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		args = args[2:]
 	}
 	if len(args) == 0 {
-		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, or apply"))
+		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, metadata, or apply"))
 	}
 	name, args := args[0], args[1:]
 	c.errorJSONSeen, c.errorJSON = requestedJSONErrorMode(args)
-	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "remote" {
+	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "metadata" || name == "remote" {
 		args = pathFlagsFirst(args)
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -255,6 +256,110 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 			op.Old, op.New = fields.Old, fields.New
 		}
 		return c.writeRequest(request{RequestID: *rid, Operations: []operation{op}})
+	case "metadata":
+		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
+		input := fs.String("input", "-", "typed JSON value or update payload source")
+		rid := fs.String("request-id", "", "stable request ID for retries")
+		if e := fs.Parse(args); e != nil || fs.NArg() < 2 {
+			return c.emitError(fail("USAGE", "metadata requires get, set, remove or update and a Markdown path"))
+		}
+		action := fs.Arg(0)
+		path, e := safePath(fs.Arg(1))
+		if e != nil {
+			return c.emitError(e)
+		}
+		if action == "get" {
+			if fs.NArg() != 3 {
+				return c.emitError(fail("USAGE", "metadata get requires a path and JSON Pointer"))
+			}
+			p, e := resolve(c.explicit)
+			if e != nil {
+				return c.emitError(e)
+			}
+			head, e := headCommit(p)
+			if e != nil {
+				return c.emitError(e)
+			}
+			file, e := readEntry(p, head, path)
+			if e != nil {
+				return c.emitError(e)
+			}
+			if !file.Exists {
+				return c.emitError(fail("DOCUMENT_NOT_FOUND", "document does not exist"))
+			}
+			value, e := metadataGet(file.Bytes, fs.Arg(2))
+			if e != nil {
+				return c.emitError(e)
+			}
+			if c.jsonOut {
+				return c.encode(struct {
+					Status   string `json:"status"`
+					Project  string `json:"project"`
+					Revision string `json:"revision"`
+					Path     string `json:"path"`
+					Pointer  string `json:"pointer"`
+					Value    any    `json:"value"`
+				}{"ok", p.Slug, head, path, fs.Arg(2), value})
+			}
+			if text, ok := value.(string); ok {
+				_, e = fmt.Fprintln(c.stdout, text)
+			} else {
+				e = json.NewEncoder(c.stdout).Encode(value)
+			}
+			if e != nil {
+				return c.emitError(e)
+			}
+			return 0
+		}
+		var edits []metadataEdit
+		switch action {
+		case "set":
+			if fs.NArg() < 3 || fs.NArg() > 4 {
+				return c.emitError(fail("USAGE", "metadata set requires path, pointer and a value (or --input JSON)"))
+			}
+			var value []byte
+			if fs.NArg() == 4 {
+				value, e = json.Marshal(fs.Arg(3))
+			} else {
+				seenInput := false
+				fs.Visit(func(f *flag.Flag) {
+					if f.Name == "input" {
+						seenInput = true
+					}
+				})
+				if !seenInput {
+					return c.emitError(fail("USAGE", "metadata set requires a value or explicit --input"))
+				}
+				value, e = readInput(c.stdin, *input)
+			}
+			if e != nil {
+				return c.emitError(e)
+			}
+			edits = []metadataEdit{{Action: "set", Pointer: fs.Arg(2), Value: value}}
+		case "remove":
+			if fs.NArg() != 3 {
+				return c.emitError(fail("USAGE", "metadata remove requires path and pointer"))
+			}
+			edits = []metadataEdit{{Action: "remove", Pointer: fs.Arg(2)}}
+		case "update":
+			if fs.NArg() != 2 {
+				return c.emitError(fail("USAGE", "metadata update requires a path and --input JSON"))
+			}
+			data, e := readInput(c.stdin, *input)
+			if e != nil {
+				return c.emitError(e)
+			}
+			edits, e = metadataUpdateEdits(data)
+			if e != nil {
+				return c.emitError(e)
+			}
+		default:
+			return c.emitError(fail("USAGE", "metadata supports get, set, remove and update"))
+		}
+		if e := validateMetadataEdits(edits); e != nil {
+			return c.emitError(e)
+		}
+		return c.writeRequest(request{RequestID: *rid, Operations: []operation{{ID: "op-1", Op: "metadata", Path: path, Metadata: edits}}})
 	case "apply":
 		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 		input := fs.String("input", "-", "JSON request input")
@@ -271,7 +376,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		return c.writeRequest(req)
 	default:
-		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, ls, read, create, edit, apply"))
+		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, ls, read, create, edit, metadata, apply"))
 	}
 }
 
