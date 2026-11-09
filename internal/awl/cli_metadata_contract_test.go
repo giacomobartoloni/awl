@@ -131,3 +131,18 @@ func TestCLIContractMetadataTypedValuesAndEscapedPointer(t *testing.T) {
 		t.Fatalf("null was not written as a typed YAML value: %q", got)
 	}
 }
+
+func TestCLIContractMetadataRejectsMultilineScalarWithoutDataLoss(t *testing.T) {
+	c := fixture(t)
+	c.init(t)
+	path := "Activities/multiline.md"
+	initial := []byte("---\nstatus: first\n  second\nother: preserved\n---\nBody\n")
+	c.mustCall(t, initial, "create", path, "--json")
+	rc, out, _ := c.call(nil, "metadata", "set", path, "/status", "completed", "--json")
+	if rc != 2 || !bytes.Contains(out, []byte("UNSUPPORTED_METADATA")) {
+		t.Fatalf("multiline scalar was not rejected: %d %s", rc, out)
+	}
+	if got := c.read(t, path); !bytes.Equal(got, initial) {
+		t.Fatalf("multiline scalar edit changed unrelated content: %q", got)
+	}
+}
