@@ -336,6 +336,16 @@ func (fm *yamlFrontmatter) replaceScalar(node *yaml.Node, typedJSON json.RawMess
 	if valueEnd <= offset {
 		return nil, fail("UNSUPPORTED_METADATA", "cannot identify scalar token")
 	}
+	// Reject folded or quoted multi-line scalars: a source line is not a
+	// complete replacement target merely because its first token is known.
+	var probe yaml.Node
+	standalone := append([]byte("value: "), line[offset:valueEnd]...)
+	standalone = append(standalone, '\n')
+	if err := yaml.Unmarshal(standalone, &probe); err != nil || len(probe.Content) != 1 ||
+		len(probe.Content[0].Content) != 2 || probe.Content[0].Content[1].Kind != yaml.ScalarNode ||
+		probe.Content[0].Content[1].Tag != node.Tag || probe.Content[0].Content[1].Value != node.Value {
+		return nil, fail("UNSUPPORTED_METADATA", "scalar cannot be safely isolated to one physical line")
+	}
 	var formatted bytes.Buffer
 	if err := json.Compact(&formatted, typedJSON); err != nil {
 		return nil, fail("INVALID_METADATA_INPUT", "invalid JSON metadata value")
