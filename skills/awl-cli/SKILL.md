@@ -1,43 +1,45 @@
 ---
 name: awl-cli
-description: Use when operating the experimental awl CLI to initialize an explicitly authorized Git-backed project, inspect managed Markdown documents, create or edit content, apply requests, or read and change YAML frontmatter metadata. Covers safe invocation, request replay, verification, and current command limits. Does not provide Obsidian integration or workflow-specific rules.
+description: Use when a task requires the awl command-line tool to inspect or change managed Markdown documents, edit YAML frontmatter, initialize a Git-backed project, or handle write failures and request retries.
 ---
 
 # awl CLI
 
-Use this skill to operate the **experimental** `awl` executable. It manages Markdown documents in a **separate bare Git repository**, using the current source Git worktree to resolve project context. It does not write documents into the source working tree.
+`awl` manages Markdown documents in a separate Git-backed store. The current source Git repository or linked worktree supplies project context; `awl` does not write documents into the source working tree.
 
-This skill describes the experimental CLI implementation now merged into `main` (PR #7: local Git-backed commands; PR #9: metadata; PR #10: help/version). These merges do not establish a stable release contract.
+## Quick reference
 
-## Before running commands
+| Task | Command |
+| --- | --- |
+| Inspect CLI | `awl --help`, `awl --version` |
+| Command help | `awl help COMMAND` |
+| Check project | `awl ls --json` |
+| List/read documents | `awl ls [DIRECTORY]`, `awl read DOCUMENT.md` |
+| Create document | `awl create DOCUMENT.md --input FILE --json` |
+| Edit body | `awl edit DOCUMENT.md --input FILE --json` |
+| Edit frontmatter | `awl metadata get/set/insert/remove ...` |
+| Ordered requests | `awl apply --input FILE --json` |
 
-1. Confirm `command -v awl` succeeds in the agent's execution environment. Use `awl --version` to inspect the build identifier and `awl --help` to discover commands; both work without an initialized project. A development or VCS-derived version is not proof of a supported release.
-2. Run commands from the relevant source Git repository or its linked worktree. A leading `--project <slug>` can check the current project identity; it cannot discover an unrelated project.
-3. For an existing project, run `awl ls --json` and check the returned `project` and `revision`. Do **not** run `awl init` automatically when the project is not initialized.
-4. Before writing, establish that the user authorized this project and operation; Git author name/email must be available for audited mutations.
-5. Treat user-owned Markdown and managed history as data to preserve. Never overwrite, migrate, normalize, delete, or rewrite content as an implicit recovery step.
+## Safe operating procedure
 
-## Operating workflow
+1. Check `command -v awl`; inspect `awl --help` or `awl --version` without initializing a project. A development build identifier does not imply a published release.
+2. Run commands from the intended source Git repository or linked worktree. Use `awl ls --json` to verify the resolved `project` and `revision`. Initialize or change project configuration only with explicit authorization.
+3. Read the target document or YAML pointer before editing. Mutations require a Git author identity.
+4. Use the narrowest supported command. `edit` replaces one unique exact match in the Markdown **body**; `metadata` handles supported frontmatter changes. `create` never overwrites an existing document.
+5. Supply a stable `--request-id` for retriable writes. Retry an ambiguous operation only with its **original request ID and identical payload**; inspect current state first.
+6. Check exit code, response `status`, `members` and errors; read back the document to verify changes. A failed or no-op request may still create an audit commit without changing document content.
 
-1. Read the relevant document and/or metadata before changing it.
-2. Select the narrowest implemented command. Read [commands](references/commands.md) for initialization, listing, reads, body edits and composites; read [metadata](references/metadata.md) for frontmatter.
-3. Prefer `--json` for machine-readable responses. For a mutation, provide a **stable, unique `--request-id`** when retryability matters.
-4. Check the **process exit code**, top-level `status`, per-operation `members` and any `error.code`; never infer success merely from the existence of a Git commit.
-5. Read the document or metadata back and verify the intended change and preservation of unrelated content. Report the actual result, commit and request ID where available.
-6. On conflict or ambiguous publication, inspect the current state first. Reuse the **same request ID and identical payload** for a retry of the same logical request. Never use a fresh ID to bypass a conflict.
+## Limits and common mistakes
 
-## Boundaries
+- A leading `--project SLUG` confirms the current project; it does not select an unrelated repository.
+- `awl metadata set` changes existing supported fields; it does not add missing keys. Unsupported YAML layouts must not be silently rewritten.
+- Ordered `apply` requests may partially succeed. Never report `partial` as full success.
+- `awl remote add` only configures a URL. It does not fetch, push, or synchronize documents.
+- The CLI has documented limitations around concurrent sequence insertions and power-loss durability. Avoid destructive recovery or automatic data migration.
 
-- `awl edit` changes a **unique exact Markdown body** target, not YAML frontmatter. Use `awl metadata` for supported YAML changes.
-- `create` rejects an existing document. Metadata `set` requires existing fields. No unrestricted YAML rewrite or automatic data migration is available.
-- A failed or no-op request may publish an **audit-only commit** with an unchanged `document_tree`. `apply` may return partial success.
-- `remote add` records configuration only; it does **not** fetch, push or synchronize documents. There is no automatic filesystem or vault sync.
-- The implementation is experimental. Power-loss durability, broad filesystem and OS portability, arbitrary YAML layouts, and safe stale-position sequence insertion are **not** production guarantees.
-- Do not introduce personal organization rules, agent identity mappings, Obsidian, qmd, or any specific worklog directory convention into this reusable skill. Those belong in the user's separate instructions.
+## Detailed references
 
-## Reference files
+- [Commands and responses](references/commands.md): project setup, help/version, reads, writes, audit and retries.
+- [YAML metadata](references/metadata.md): RFC 6901 pointers, typed JSON, atomic sets, supported sequences and rejection rules.
 
-- [Command reference](references/commands.md): `--help`, `--version`, `init`, `remote add`, `ls`, `read`, `create`, `edit`, `apply`; responses and retries.
-- [Metadata reference](references/metadata.md): `get`, `set`, `insert`, `remove`; RFC 6901 pointers, typed values, preservation and unsupported YAML.
-
-Source of current experimental behavior: `cmd/awl`, `internal/awl` (including `cli_info.go`), and `docs/experiments/` in this repository. Recheck those files when working against a different CLI revision.
+Prefer the installed CLI's `--help` output when its behavior differs from these reference examples.
