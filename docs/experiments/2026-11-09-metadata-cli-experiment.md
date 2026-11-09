@@ -14,13 +14,13 @@ Keep awl edit restricted to the Markdown body. Add awl metadata for YAML frontma
     awl metadata set Activities/example.md /status completed --json
     awl metadata remove Activities/example.md /completed_at --json
 
-    printf '%s' '{"set":{"/status":"completed","/completed_at":"2026-11-09"}}' |
-      awl metadata update Activities/example.md --input - --json
+    printf '%s' '{"/status":"completed","/completed_at":"2026-11-09"}' |
+      awl metadata set Activities/example.md --input - --json
 
 - get is read-only and reports a managed Git revision in JSON mode. Plain string output is unquoted, while other types print as JSON.
 - set with a positional VALUE treats it as a string. To send a typed JSON literal, use --input FILE rather than a positional VALUE.
 - remove deletes an existing scalar mapping field; it is distinct from assigning null.
-- update accepts a JSON object with a nonempty set map, whose keys are JSON Pointers and whose values are typed JSON. The updates are ordered deterministically and staged all-or-nothing for the document.
+- set with a path and explicit --input FILE (no pointer argument) accepts a nonempty JSON object mapping JSON Pointers directly to typed JSON values. Updates are ordered deterministically and staged all-or-nothing for the document. A wrapper such as {"set": {...}} is not accepted.
 - --request-id uses the experimental audited Git replay contract for mutations. --json uses the draft response envelope.
 - Multiple distinct operations in awl apply retain their established independent-failure/continue behavior.
 
