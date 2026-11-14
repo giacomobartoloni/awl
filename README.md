@@ -51,7 +51,7 @@ Download the matching archive and `checksums.txt` from the **same** [GitHub Rele
 | Linux ARM64 | `linux_arm64.tar.gz` |
 | Windows x86-64 | `windows_amd64.zip` |
 
-Archive names follow `awl_VERSION_OS_ARCH.tar.gz` (or `.zip` on Windows), where `VERSION` omits the leading `v` from the Git tag. **Replace `ARCHIVE`** below with the archive you downloaded.
+Archive names follow `awl_VERSION_OS_ARCH.tar.gz` (or `.zip` on Windows), where `VERSION` omits the leading `v` from the Git tag. **Replace `ARCHIVE`** in the commands below with your downloaded archive's base filename (without the `.tar.gz` or `.zip` extension).
 
 **macOS / Linux:**
 
