@@ -37,6 +37,9 @@ jobs:
         run: |
           go run ./cmd/awl --version
           go run ./cmd/awl --help
+      - name: Verify Windows file locking
+        if: matrix.os == 'windows-latest'
+        run: go test -run TestWindowsFileLockSerializesAccess -count=1 ./internal/awl
 
   package-check:
     name: Package snapshot (no publication)
