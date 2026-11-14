@@ -676,4 +676,3 @@ func parseLocal(path string) (binding, error) {
 	}
 	return b, nil
 }
-
