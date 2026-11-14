@@ -1,0 +1,38 @@
+version: 2
+
+project_name: awl
+
+builds:
+  - id: awl
+    main: ./cmd/awl
+    binary: awl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/giacomobartoloni/awl/internal/awl.Version={{ .Version }}
+
+archives:
+  - ids:
+      - awl
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt

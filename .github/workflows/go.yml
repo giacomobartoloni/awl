@@ -21,7 +21,8 @@ jobs:
           cache: false
       - name: Check formatting
         run: |
-          test -z "$(gofmt -l cmd internal)"
+          unformatted="$(gofmt -l cmd internal)"
+          test -z "$unformatted" || { printf "Unformatted Go files:\n%s\n" "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
       - name: Integration tests with race detector

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -676,16 +675,4 @@ func parseLocal(path string) (binding, error) {
 		return b, e
 	}
 	return b, nil
-}
-
-func flock(file string) (func(), error) {
-	f, e := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
-	}
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); e != nil {
-		f.Close()
-		return nil, e
-	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
