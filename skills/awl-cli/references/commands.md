@@ -9,6 +9,7 @@ This reference describes the currently available `awl` commands. Check `awl --he
 - `awl init` is an **explicit bootstrap**, only when authorized. An omitted `--slug` infers a slug from the source repository identity. Optional `--repo-dir` selects an exact **new, absent absolute directory** for a local managed repository; its existing parent must be safe and must already exist. It must not point inside the source worktree or Git common dir.
 - The source project configuration uses `.awl/project.yaml`; a canonical local binding is maintained under the source repository's Git common dir. Do not edit either file by hand.
 - Mutations need Git author name/email (available via Git configuration). Reads and remote configuration do not require author identity.
+- The managed Git store always uses local `refs/heads/awl`. A project's remote target is its configured URL plus remote branch (default: `awl`). Different projects may share a remote repository using distinct branches, with no cross-branch Git history merge or per-project access isolation.
 
 Examples, from an authorized source Git worktree:
 
@@ -18,7 +19,11 @@ awl ls --json
 awl init --slug demo --repo-dir /absolute/new-store/demo.git --json
 # Configures a URL only; performs no fetch/push/network sync:
 awl remote add https://example.invalid/managed.git --json
+# One remote repository, independent project-specific branch:
+awl remote add https://example.invalid/team-worklogs.git --branch worklogs/demo --json
 ```
+
+The `--branch` option on `remote add` and `--remote-branch` on `init` accept Git branch names, not full `refs/heads/*` names. `remote add` is idempotent for the same destination; changing an existing URL or branch requires a separately reviewed migration. Branch names are checked locally, and neither command contacts the remote. A branch name is a destination selector, not proof of project identity or access segregation.
 
 The optional leading `awl --project demo ...` is an identity check against the **currently resolved** source project, not out-of-repository project discovery.
 

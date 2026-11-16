@@ -49,19 +49,23 @@ func repositorySlug(root, common string) (string, error) {
 	return slug, nil
 }
 
+const defaultRemoteBranch = "awl"
+
 type binding struct {
-	Slug      string
-	Remote    string
-	LocalRepo string
+	Slug         string
+	Remote       string
+	RemoteBranch string
+	LocalRepo    string
 }
 type project struct {
-	Root      string
-	Common    string
-	Slug      string
-	Remote    string
-	GitDir    string
-	UserName  string
-	UserEmail string
+	Root         string
+	Common       string
+	Slug         string
+	Remote       string
+	RemoteBranch string
+	GitDir       string
+	UserName     string
+	UserEmail    string
 }
 
 func appDataHome() (string, error) {
@@ -180,6 +184,17 @@ func pathWithin(base, path string) bool {
 }
 
 func initialize(slug, remote, repoDir, explicit string) (project, error) {
+	return initializeWithBranch(slug, remote, "", repoDir, explicit)
+}
+
+// initializeWithBranch leaves legacy projects on the "awl" remote branch.
+func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit string) (project, error) {
+	branchProvided := requestedBranch != ""
+	if branchProvided {
+		if e := validRemoteBranch(requestedBranch); e != nil {
+			return project{}, e
+		}
+	}
 	root, common, e := source()
 	if e != nil {
 		return project{}, e
@@ -187,6 +202,15 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	// A new project infers its slug before creating any configuration or
 	// store. Re-initializing an existing project uses its recorded identity.
 	firstProjectFile := filepath.Join(root, ".awl", "project.yaml")
+	// Reject a branch-only first initialization before creating any project
+	// directories. Reinitialization may use an already configured URL.
+	if branchProvided && remote == "" {
+		if _, check := os.Lstat(firstProjectFile); os.IsNotExist(check) {
+			return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
+		} else if check != nil {
+			return project{}, check
+		}
+	}
 	if _, e = os.Lstat(firstProjectFile); os.IsNotExist(e) {
 		if slug == "" {
 			slug, e = repositorySlug(root, common)
@@ -240,7 +264,7 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		return project{}, fail("UNSAFE_PATH", "source project configuration must not be a symlink")
 	}
 	if _, e = os.Stat(projPath); e == nil {
-		existingSlug, existingRemote, e := parseShared(projPath)
+		existingSlug, existingRemote, existingBranch, e := parseSharedTarget(projPath)
 		if e != nil {
 			return project{}, e
 		}
@@ -250,7 +274,13 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		if remote != "" && remote != existingRemote {
 			return project{}, fail("REMOTE_CHANGE_REQUIRES_COMMAND", "use awl remote add to configure an unconfigured remote; replacing an existing remote is unsupported")
 		}
-		slug, remote = existingSlug, existingRemote
+		if branchProvided && existingRemote == "" {
+			return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
+		}
+		if branchProvided && requestedBranch != existingBranch {
+			return project{}, fail("REMOTE_ALREADY_CONFIGURED", "changing the remote branch requires a separate migration")
+		}
+		slug, remote, requestedBranch = existingSlug, existingRemote, existingBranch
 	} else if !os.IsNotExist(e) {
 		return project{}, e
 	} else if !slugPattern.MatchString(slug) {
@@ -262,6 +292,13 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	if e = validRemote(remote); e != nil {
 		return project{}, e
 	}
+	if branchProvided && remote == "" {
+		return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
+	}
+	remoteBranch := requestedBranch
+	if remoteBranch == "" {
+		remoteBranch = defaultRemoteBranch
+	}
 	user, email, e := identity(root)
 	if e != nil {
 		return project{}, e
@@ -272,7 +309,7 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		if e != nil {
 			return project{}, e
 		}
-		if bind.Slug != slug || bind.Remote != remote {
+		if bind.Slug != slug || bind.Remote != remote || bind.RemoteBranch != remoteBranch {
 			return project{}, fail("PROJECT_CONFLICT", "canonical project binding conflicts with source configuration")
 		}
 		if repoDir != "" && repoDir != bind.LocalRepo {
@@ -281,7 +318,7 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		if _, e = os.Stat(bind.LocalRepo); e != nil {
 			return project{}, fail("MANAGED_REPO_MISSING", "configured managed repository is missing")
 		}
-		p := project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: bind.LocalRepo, UserName: user, UserEmail: email}
+		p := project{Root: root, Common: common, Slug: slug, Remote: remote, RemoteBranch: remoteBranch, GitDir: bind.LocalRepo, UserName: user, UserEmail: email}
 		if _, e = headCommit(p); e != nil {
 			return project{}, e
 		}
@@ -317,7 +354,7 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	if _, e = gitText("", nil, nil, "init", "--bare", dest); e != nil {
 		return project{}, e
 	}
-	p := project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: dest, UserName: user, UserEmail: email}
+	p := project{Root: root, Common: common, Slug: slug, Remote: remote, RemoteBranch: remoteBranch, GitDir: dest, UserName: user, UserEmail: email}
 	// An empty initial tree is a bootstrap state, not an audited mutation request.
 	tree, e := gitText(dest, nil, []byte{}, "hash-object", "-w", "-t", "tree", "--stdin")
 	if e != nil {
@@ -334,6 +371,9 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 		body := fmt.Sprintf("schema: 1\nproject:\n  slug: %s\n", slug)
 		if remote != "" {
 			body += fmt.Sprintf("storage:\n  remote: %s\n", remote)
+			if remoteBranch != defaultRemoteBranch {
+				body += fmt.Sprintf("  remoteBranch: %s\n", remoteBranch)
+			}
 		}
 		if e = atomicNewFile(projPath, []byte(body)); e != nil {
 			return project{}, e
@@ -344,6 +384,9 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 	local := fmt.Sprintf("schema: 1\nbinding:\n  slug: %s\n", slug)
 	if remote != "" {
 		local += fmt.Sprintf("  remote: %s\n", remote)
+		if remoteBranch != defaultRemoteBranch {
+			local += fmt.Sprintf("  remoteBranch: %s\n", remoteBranch)
+		}
 	}
 	local += fmt.Sprintf("storage:\n  localRepo: %s\n", dest)
 	if e = atomicNewFile(localPath, []byte(local)); e != nil {
@@ -381,10 +424,27 @@ func validRemote(remote string) error {
 	return nil
 }
 
+// validRemoteBranch delegates branch syntax to Git, while forbidding ambiguous
+// reflog expressions and fully qualified refs as user-supplied branch names.
+func validRemoteBranch(branch string) error {
+	if branch == "" || strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "refs/") || strings.Contains(branch, "@{") {
+		return fail("INVALID_REMOTE_BRANCH", "expected a Git branch name such as worklogs/api")
+	}
+	out, e := gitText("", nil, nil, "check-ref-format", "--branch", branch)
+	if e != nil || out != branch {
+		return fail("INVALID_REMOTE_BRANCH", "invalid Git branch name")
+	}
+	return nil
+}
+
 // withRemote inserts a missing scalar without normalizing existing user-owned
 // configuration bytes (including comments and CRLF). It accepts only the
 // already-validated, minimal schema supported by configRead.
 func withRemote(original []byte, section, remote string) ([]byte, error) {
+	return withRemoteTarget(original, section, remote, defaultRemoteBranch)
+}
+
+func withRemoteTarget(original []byte, section, remote, branch string) ([]byte, error) {
 	nl := "\n"
 	if bytes.Contains(original, []byte("\r\n")) {
 		nl = "\r\n"
@@ -403,6 +463,9 @@ func withRemote(original []byte, section, remote string) ([]byte, error) {
 				out.WriteString(nl)
 			}
 			out.WriteString("  remote: " + remote + nl)
+			if branch != defaultRemoteBranch {
+				out.WriteString("  remoteBranch: " + branch + nl)
+			}
 		}
 	}
 	if !found {
@@ -413,6 +476,9 @@ func withRemote(original []byte, section, remote string) ([]byte, error) {
 			out.WriteString(nl)
 		}
 		out.WriteString("storage:" + nl + "  remote: " + remote + nl)
+		if branch != defaultRemoteBranch {
+			out.WriteString("  remoteBranch: " + branch + nl)
+		}
 	}
 	return out.Bytes(), nil
 }
@@ -459,6 +525,16 @@ func replaceConfigAtomically(path string, before, after []byte) error {
 // remote, changes the managed Git ref, or replaces a different remote. It is
 // restartable if a process stopped between the two configuration updates.
 func addRemote(remote, explicit string) (project, bool, error) {
+	return addRemoteWithBranch(remote, "", explicit)
+}
+
+// An omitted branch reuses the configured target for retry/idempotence.
+func addRemoteWithBranch(remote, requestedBranch, explicit string) (project, bool, error) {
+	if requestedBranch != "" {
+		if e := validRemoteBranch(requestedBranch); e != nil {
+			return project{}, false, e
+		}
+	}
 	if remote == "" {
 		return project{}, false, fail("REMOTE_REQUIRED", "remote add requires a nonempty URL")
 	}
@@ -495,7 +571,7 @@ func addRemote(remote, explicit string) (project, bool, error) {
 	if e = validateOptionalLocalLink(root, common); e != nil {
 		return project{}, false, e
 	}
-	sharedSlug, sharedRemote, e := parseShared(sharedPath)
+	sharedSlug, sharedRemote, sharedBranch, e := parseSharedTarget(sharedPath)
 	if e != nil {
 		return project{}, false, e
 	}
@@ -506,9 +582,22 @@ func addRemote(remote, explicit string) (project, bool, error) {
 	if explicit != "" && explicit != sharedSlug || bind.Slug != sharedSlug {
 		return project{}, false, fail("PROJECT_CONFLICT", "remote add requires the initialized source project binding")
 	}
-	for _, existing := range []string{sharedRemote, bind.Remote} {
-		if existing != "" && existing != remote {
-			return project{}, false, fail("REMOTE_ALREADY_CONFIGURED", "a different remote is already configured; replacement is unsupported")
+	branch := requestedBranch
+	if branch == "" {
+		switch {
+		case sharedRemote != "":
+			branch = sharedBranch
+		case bind.Remote != "":
+			branch = bind.RemoteBranch
+		default:
+			branch = defaultRemoteBranch
+		}
+	}
+	for _, target := range []struct{ url, branch string }{
+		{sharedRemote, sharedBranch}, {bind.Remote, bind.RemoteBranch},
+	} {
+		if target.url != "" && (target.url != remote || target.branch != branch) {
+			return project{}, false, fail("REMOTE_ALREADY_CONFIGURED", "changing remote URL or branch requires an explicit migration")
 		}
 	}
 	st, e := os.Lstat(bind.LocalRepo)
@@ -517,11 +606,11 @@ func addRemote(remote, explicit string) (project, bool, error) {
 	}
 	// Configuring a remote does not create a Git commit and therefore must not
 	// depend on author identity being configured in the source worktree.
-	p := project{Root: root, Common: common, Slug: sharedSlug, Remote: remote, GitDir: bind.LocalRepo}
+	p := project{Root: root, Common: common, Slug: sharedSlug, Remote: remote, RemoteBranch: branch, GitDir: bind.LocalRepo}
 	if _, e = headCommit(p); e != nil {
 		return project{}, false, e
 	}
-	if sharedRemote == remote && bind.Remote == remote {
+	if sharedRemote == remote && sharedBranch == branch && bind.Remote == remote && bind.RemoteBranch == branch {
 		return p, false, nil
 	}
 	// A retry also repairs the only supported interrupted states: one config
@@ -539,7 +628,7 @@ func addRemote(remote, explicit string) (project, bool, error) {
 		if err != nil {
 			return project{}, false, err
 		}
-		after, err := withRemote(before, item.section, remote)
+		after, err := withRemoteTarget(before, item.section, remote, branch)
 		if err != nil {
 			return project{}, false, err
 		}
@@ -559,7 +648,7 @@ func resolve(explicit string) (project, error) {
 	if st, e := os.Lstat(projectFile); e == nil && st.Mode()&os.ModeSymlink != 0 {
 		return project{}, fail("UNSAFE_PATH", "source project configuration cannot be a symlink")
 	}
-	slug, remote, e := parseShared(projectFile)
+	slug, remote, branch, e := parseSharedTarget(projectFile)
 	if e != nil {
 		if os.IsNotExist(e) {
 			return project{}, fail("PROJECT_NOT_INITIALIZED", "missing .awl/project.yaml; run awl init")
@@ -576,7 +665,7 @@ func resolve(explicit string) (project, error) {
 		}
 		return project{}, e
 	}
-	if bind.Slug != slug || bind.Remote != remote {
+	if bind.Slug != slug || bind.Remote != remote || bind.RemoteBranch != branch {
 		return project{}, fail("PROJECT_CONFLICT", "source configuration differs from initialized canonical binding")
 	}
 	if e = validateOptionalLocalLink(root, common); e != nil {
@@ -590,7 +679,7 @@ func resolve(explicit string) (project, error) {
 		return project{}, fail("UNSAFE_PATH", "managed repository is not an ordinary directory")
 	}
 	// Identity is only required when committing a mutation, not when reading.
-	return project{Root: root, Common: common, Slug: slug, Remote: remote, GitDir: bind.LocalRepo}, nil
+	return project{Root: root, Common: common, Slug: slug, Remote: remote, RemoteBranch: branch, GitDir: bind.LocalRepo}, nil
 }
 
 func configRead(file string, allowed map[string]bool) (map[string]string, error) {
@@ -649,29 +738,64 @@ func configRead(file string, allowed map[string]bool) (map[string]string, error)
 	return m, nil
 }
 func parseShared(path string) (string, string, error) {
-	m, e := configRead(path, map[string]bool{"project": true, "storage": true, "schema": true, "project.slug": true, "storage.remote": true})
+	slug, remote, _, e := parseSharedTarget(path)
+	return slug, remote, e
+}
+
+func parseSharedTarget(path string) (string, string, string, error) {
+	m, e := configRead(path, map[string]bool{
+		"project": true, "storage": true, "schema": true,
+		"project.slug": true, "storage.remote": true, "storage.remoteBranch": true,
+	})
 	if e != nil {
-		return "", "", e
+		return "", "", "", e
 	}
 	slug, remote := m["project.slug"], m["storage.remote"]
 	if !slugPattern.MatchString(slug) {
-		return "", "", fail("INVALID_CONFIG", "missing or invalid project slug")
+		return "", "", "", fail("INVALID_CONFIG", "missing or invalid project slug")
 	}
 	if e = validRemote(remote); e != nil {
-		return "", "", e
+		return "", "", "", e
 	}
-	return slug, remote, nil
+	branch := m["storage.remoteBranch"]
+	if branch != "" && remote == "" {
+		return "", "", "", fail("INVALID_CONFIG", "remoteBranch requires a remote URL")
+	}
+	if branch == "" {
+		branch = defaultRemoteBranch
+	}
+	if e = validRemoteBranch(branch); e != nil {
+		return "", "", "", e
+	}
+	return slug, remote, branch, nil
 }
+
 func parseLocal(path string) (binding, error) {
-	m, e := configRead(path, map[string]bool{"binding": true, "storage": true, "schema": true, "binding.slug": true, "binding.remote": true, "storage.localRepo": true})
+	m, e := configRead(path, map[string]bool{
+		"binding": true, "storage": true, "schema": true,
+		"binding.slug": true, "binding.remote": true, "binding.remoteBranch": true,
+		"storage.localRepo": true,
+	})
 	if e != nil {
 		return binding{}, e
 	}
-	b := binding{m["binding.slug"], m["binding.remote"], m["storage.localRepo"]}
+	b := binding{
+		Slug: m["binding.slug"], Remote: m["binding.remote"],
+		RemoteBranch: m["binding.remoteBranch"], LocalRepo: m["storage.localRepo"],
+	}
 	if !slugPattern.MatchString(b.Slug) || !filepath.IsAbs(b.LocalRepo) {
 		return b, fail("INVALID_CONFIG", "incomplete local binding")
 	}
 	if e = validRemote(b.Remote); e != nil {
+		return b, e
+	}
+	if b.RemoteBranch != "" && b.Remote == "" {
+		return b, fail("INVALID_CONFIG", "remoteBranch requires a remote URL")
+	}
+	if b.RemoteBranch == "" {
+		b.RemoteBranch = defaultRemoteBranch
+	}
+	if e = validRemoteBranch(b.RemoteBranch); e != nil {
 		return b, e
 	}
 	return b, nil

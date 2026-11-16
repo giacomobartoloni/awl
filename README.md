@@ -128,6 +128,14 @@ awl read Notes/first-note.md
 
 The project directory supplies **context**; the activity records live in a **separate managed local document store**, not among the project's source files.
 
+Optional setup for a shared team Git repository (configuration only; no fetch or push):
+
+```sh
+awl remote add git@example.com:team/worklogs.git --branch worklogs/my-project
+```
+
+Alternatively use `awl init --slug my-project --remote URL --remote-branch worklogs/my-project` during first-time initialization. Omitting the branch preserves the legacy `awl` default.
+
 ## The CLI today
 
 | What you want to do | Command |
@@ -140,9 +148,9 @@ The project directory supplies **context**; the activity records live in a **sep
 | Replace a unique body match | `awl edit Notes/example.md --input edit.json` |
 | Read or change YAML frontmatter | `awl metadata get ...` (also `set`, `insert`, `remove`) |
 | Apply ordered operations | `awl apply --input request.json` |
-| Configure a remote URL | `awl remote add URL` |
+| Configure a remote Git target | `awl remote add URL [--branch BRANCH]` |
 
-Most operational commands support `--json`. Mutation commands support request IDs for safely recognizing an identical retry; an `apply` request can **partially succeed**, so always inspect its per-operation results. `awl remote add` only saves a remote URL—it **does not synchronize** anything.
+Most operational commands support `--json`. Mutation commands support request IDs for safely recognizing an identical retry; an `apply` request can **partially succeed**, so always inspect its per-operation results. `awl remote add` saves a Git remote URL and optional branch name—it **does not synchronize** anything. The default remote branch is `awl`; a team can choose `worklogs/api` or `worklogs/web` in the same remote Git repository while keeping the histories independent. A project always has one authoritative remote URL-and-branch target. Changing that target after configuration requires a separately designed migration, not another `remote add`. No per-project access isolation is provided by Git branches; repository access typically covers all branches.
 
 For exact syntax, payload formats, return codes, and safety rules, see the [CLI command reference](skills/awl-cli/references/commands.md) and [metadata reference](skills/awl-cli/references/metadata.md).
 
