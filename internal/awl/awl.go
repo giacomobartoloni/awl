@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 const managedRef = "refs/heads/awl"
@@ -116,290 +115,20 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	fs.SetOutput(io.Discard)
 	switch name {
 	case "init":
-		slug := fs.String("slug", "", "optional project slug; defaults to current repository name")
-		remote := fs.String("remote", "", "authoritative worklog Git remote for new configuration")
-		remoteBranch := fs.String("remote-branch", "", "optional remote branch name (default: awl)")
-		repoDir := fs.String("repo-dir", "", "absolute path for a new managed bare Git repository")
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-			return c.emitError(fail("USAGE", "init accepts optional --slug, --remote, --remote-branch, --repo-dir, --json"))
-		}
-		repoDirProvided, slugProvided, remoteBranchProvided := false, false, false
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "repo-dir":
-				repoDirProvided = true
-			case "slug":
-				slugProvided = true
-			case "remote-branch":
-				remoteBranchProvided = true
-			}
-		})
-		if repoDirProvided && *repoDir == "" {
-			return c.emitError(fail("INVALID_REPO_DIR", "--repo-dir must name a new absolute directory"))
-		}
-		if slugProvided && *slug == "" {
-			return c.emitError(fail("INVALID_SLUG", "--slug must not be empty; omit it to infer from the Git repository"))
-		}
-		if remoteBranchProvided && *remoteBranch == "" {
-			return c.emitError(fail("INVALID_REMOTE_BRANCH", "--remote-branch must be a nonempty Git branch"))
-		}
-		p, e := initializeWithBranch(*slug, *remote, *remoteBranch, *repoDir, c.explicit)
-		if e != nil {
-			return c.emitError(e)
-		}
-		return c.emit(result{Status: "initialized", Project: p.Slug})
+		return c.commandInit(fs, args)
 	case "remote":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		remoteBranch := fs.String("branch", "", "optional remote branch name (default: awl)")
-		if e := fs.Parse(args); e != nil || fs.NArg() != 2 || fs.Arg(0) != "add" {
-			return c.emitError(fail("USAGE", "remote add requires one Git URL and optional --branch and --json"))
-		}
-		branchProvided := false
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "branch" {
-				branchProvided = true
-			}
-		})
-		if branchProvided && *remoteBranch == "" {
-			return c.emitError(fail("INVALID_REMOTE_BRANCH", "--branch must be a nonempty Git branch"))
-		}
-		p, changed, e := addRemoteWithBranch(fs.Arg(1), *remoteBranch, c.explicit)
-		if e != nil {
-			return c.emitError(e)
-		}
-		status := "remote_added"
-		if !changed {
-			status = "remote_unchanged"
-		}
-		return c.emit(result{Status: status, Project: p.Slug})
+		return c.commandRemote(fs, args)
 	case "ls":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		if e := fs.Parse(args); e != nil || fs.NArg() > 1 {
-			return c.emitError(fail("USAGE", "ls accepts an optional project-relative directory and --json"))
-		}
-		prefix, e := safeListPrefix(fs.Arg(0))
-		if e != nil {
-			return c.emitError(e)
-		}
-		p, e := resolve(c.explicit)
-		if e != nil {
-			return c.emitError(e)
-		}
-		revision, e := headCommit(p)
-		if e != nil {
-			return c.emitError(e)
-		}
-		paths, e := listDocuments(p, revision, prefix)
-		if e != nil {
-			return c.emitError(e)
-		}
-		if c.jsonOut {
-			return c.encode(struct {
-				Status   string   `json:"status"`
-				Project  string   `json:"project"`
-				Revision string   `json:"revision"`
-				Paths    []string `json:"paths"`
-			}{"ok", p.Slug, revision, paths})
-		}
-		for _, path := range paths {
-			if _, e := fmt.Fprintln(c.stdout, path); e != nil {
-				return c.emitError(e)
-			}
-		}
-		return 0
+		return c.commandList(fs, args)
 	case "read":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		if e := fs.Parse(args); e != nil || fs.NArg() != 1 {
-			return c.emitError(fail("USAGE", "read requires project-relative Markdown path"))
-		}
-		p, e := resolve(c.explicit)
-		if e != nil {
-			return c.emitError(e)
-		}
-		path, e := safePath(fs.Arg(0))
-		if e != nil {
-			return c.emitError(e)
-		}
-		head, e := headCommit(p)
-		if e != nil {
-			return c.emitError(e)
-		}
-		file, e := readEntry(p, head, path)
-		if e != nil {
-			return c.emitError(e)
-		}
-		if !file.Exists {
-			return c.emitError(fail("DOCUMENT_NOT_FOUND", "document does not exist"))
-		}
-		if c.jsonOut {
-			if !utf8.Valid(file.Bytes) {
-				return c.emitError(fail("INVALID_CONTENT", "document is not valid UTF-8 for JSON output"))
-			}
-			return c.emitRead(p, file.Bytes, head)
-		}
-		_, e = c.stdout.Write(file.Bytes)
-		if e != nil {
-			return c.emitError(e)
-		}
-		return 0
+		return c.commandRead(fs, args)
 	case "create", "edit":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		input := fs.String("input", "-", "request payload source: - for stdin, otherwise a file")
-		rid := fs.String("request-id", "", "stable request ID for retries")
-		if e := fs.Parse(args); e != nil || fs.NArg() != 1 {
-			return c.emitError(fail("USAGE", name+" requires one project-relative path"))
-		}
-		path, e := safePath(fs.Arg(0))
-		if e != nil {
-			return c.emitError(e)
-		}
-		data, e := readInput(c.stdin, *input)
-		if e != nil {
-			return c.emitError(e)
-		}
-		op := operation{ID: "op-1", Op: name, Path: path}
-		if name == "create" {
-			if !utf8.Valid(data) {
-				return c.emitError(fail("INVALID_CONTENT", "Markdown must be UTF-8"))
-			}
-			op.Content = string(data)
-		} else {
-			var fields struct {
-				Old string `json:"old"`
-				New string `json:"new"`
-			}
-			if e = strictJSON(data, &fields); e != nil || fields.Old == "" {
-				return c.emitError(fail("INVALID_INPUT", "edit expects JSON object with nonempty old and a new string"))
-			}
-			op.Old, op.New = fields.Old, fields.New
-		}
-		return c.writeRequest(request{RequestID: *rid, Operations: []operation{op}})
+		return c.commandMutate(name, fs, args)
 	case "metadata":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		input := fs.String("input", "-", "typed JSON value or multi-pointer set payload source")
-		rid := fs.String("request-id", "", "stable request ID for retries")
-		if e := fs.Parse(args); e != nil || fs.NArg() < 2 {
-			return c.emitError(fail("USAGE", "metadata requires get, set, insert or remove and a Markdown path"))
-		}
-		action := fs.Arg(0)
-		path, e := safePath(fs.Arg(1))
-		if e != nil {
-			return c.emitError(e)
-		}
-		if action == "get" {
-			if fs.NArg() != 3 {
-				return c.emitError(fail("USAGE", "metadata get requires a path and JSON Pointer"))
-			}
-			p, e := resolve(c.explicit)
-			if e != nil {
-				return c.emitError(e)
-			}
-			head, e := headCommit(p)
-			if e != nil {
-				return c.emitError(e)
-			}
-			file, e := readEntry(p, head, path)
-			if e != nil {
-				return c.emitError(e)
-			}
-			if !file.Exists {
-				return c.emitError(fail("DOCUMENT_NOT_FOUND", "document does not exist"))
-			}
-			value, e := metadataGet(file.Bytes, fs.Arg(2))
-			if e != nil {
-				return c.emitError(e)
-			}
-			if c.jsonOut {
-				return c.encode(struct {
-					Status   string `json:"status"`
-					Project  string `json:"project"`
-					Revision string `json:"revision"`
-					Path     string `json:"path"`
-					Pointer  string `json:"pointer"`
-					Value    any    `json:"value"`
-				}{"ok", p.Slug, head, path, fs.Arg(2), value})
-			}
-			if text, ok := value.(string); ok {
-				_, e = fmt.Fprintln(c.stdout, text)
-			} else {
-				e = json.NewEncoder(c.stdout).Encode(value)
-			}
-			if e != nil {
-				return c.emitError(e)
-			}
-			return 0
-		}
-		var edits []metadataEdit
-		hasInput := false
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "input" {
-				hasInput = true
-			}
-		})
-		switch action {
-		case "set", "insert":
-			if action == "set" && fs.NArg() == 2 {
-				// Multiple JSON Pointer values supplied in one atomic set.
-				if !hasInput {
-					return c.emitError(fail("USAGE", "metadata set requires a pointer and value or explicit --input"))
-				}
-				data, err := readInput(c.stdin, *input)
-				if err != nil {
-					return c.emitError(err)
-				}
-				edits, e = metadataSetEdits(data)
-				if e != nil {
-					return c.emitError(e)
-				}
-				break
-			}
-			var value []byte
-			switch fs.NArg() {
-			case 3: // Typed JSON value, supplied explicitly via --input.
-				if !hasInput {
-					return c.emitError(fail("USAGE", "metadata "+action+" requires a value or explicit --input"))
-				}
-				value, e = readInput(c.stdin, *input)
-			case 4: // Positional values are always strings, never inferred types.
-				if hasInput {
-					return c.emitError(fail("USAGE", "metadata "+action+" cannot combine positional value with --input"))
-				}
-				value, e = json.Marshal(fs.Arg(3))
-			default:
-				return c.emitError(fail("USAGE", "metadata "+action+" requires a path, pointer and value (or explicit --input)"))
-			}
-			if e != nil {
-				return c.emitError(e)
-			}
-			edits = []metadataEdit{{Action: action, Pointer: fs.Arg(2), Value: value}}
-		case "remove":
-			if fs.NArg() != 3 || hasInput {
-				return c.emitError(fail("USAGE", "metadata remove requires path and pointer without --input"))
-			}
-			edits = []metadataEdit{{Action: "remove", Pointer: fs.Arg(2)}}
-		default:
-			return c.emitError(fail("USAGE", "metadata supports get, set, insert and remove"))
-		}
-		if e := validateMetadataEdits(edits); e != nil {
-			return c.emitError(e)
-		}
-		return c.writeRequest(request{RequestID: *rid, Operations: []operation{{ID: "op-1", Op: "metadata", Path: path, Metadata: edits}}})
+		return c.commandMetadata(fs, args)
 	case "apply":
-		fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
-		input := fs.String("input", "-", "JSON request input")
-		if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-			return c.emitError(fail("USAGE", "apply accepts --input and --json"))
-		}
-		data, e := readInput(c.stdin, *input)
-		if e != nil {
-			return c.emitError(e)
-		}
-		var req request
-		if e = strictJSON(data, &req); e != nil {
-			return c.emitError(fail("INVALID_INPUT", "apply requires JSON request"))
-		}
-		return c.writeRequest(req)
+		return c.commandApply(fs, args)
+
 	default:
 		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, ls, read, create, edit, metadata, apply"))
 	}
@@ -437,11 +166,13 @@ func pathFlagsFirst(args []string) []string {
 // must not cause their literal "--json" argument to enable JSON output.
 func requestedJSONErrorMode(args []string) (seen, enabled bool) {
 	for i := 0; i < len(args); i++ {
-		switch arg := args[i]; {
-		case arg == "--slug" || arg == "--remote" || arg == "--repo-dir" || arg == "--remote-branch" || arg == "--branch" || arg == "--input" || arg == "--request-id":
+		if cliFlagTakesValue(args[i]) {
 			if i+1 < len(args) {
 				i++
 			}
+			continue
+		}
+		switch arg := args[i]; {
 		case arg == "--json" || arg == "-json":
 			seen, enabled = true, true
 		case strings.HasPrefix(arg, "--json=") || strings.HasPrefix(arg, "-json="):

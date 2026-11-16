@@ -60,15 +60,25 @@ func (c *cli) handleInfo(args []string) (int, bool) {
 	return 0, false
 }
 
+// cliFlagTakesValue is shared by early help and JSON error-mode detection.
+// A flag-looking value must not be interpreted as another option.
+func cliFlagTakesValue(name string) bool {
+	switch name {
+	case "--slug", "--repo-dir", "--remote", "--remote-branch", "--branch", "--input", "--request-id":
+		return true
+	}
+	return false
+}
+
 func helpRequested(args []string) bool {
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--slug", "--repo-dir", "--remote", "--remote-branch", "--branch", "--input", "--request-id":
-			// A value equal to --help is not a help request.
+		if cliFlagTakesValue(args[i]) {
 			if i+1 < len(args) {
 				i++
 			}
-		case "--help", "-h":
+			continue
+		}
+		if args[i] == "--help" || args[i] == "-h" {
 			return true
 		}
 	}
