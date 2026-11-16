@@ -202,6 +202,15 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 	// A new project infers its slug before creating any configuration or
 	// store. Re-initializing an existing project uses its recorded identity.
 	firstProjectFile := filepath.Join(root, ".awl", "project.yaml")
+	// Reject a branch-only first initialization before creating any project
+	// directories. Reinitialization may use an already configured URL.
+	if branchProvided && remote == "" {
+		if _, check := os.Lstat(firstProjectFile); os.IsNotExist(check) {
+			return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
+		} else if check != nil {
+			return project{}, check
+		}
+	}
 	if _, e = os.Lstat(firstProjectFile); os.IsNotExist(e) {
 		if slug == "" {
 			slug, e = repositorySlug(root, common)
