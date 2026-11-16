@@ -248,6 +248,51 @@ func TestCLIContractSyncRejectsInvalidImportedHistory(t *testing.T) {
 	syncTestRejected(t, b, "SYNC_UNSUPPORTED_HISTORY")
 }
 
+func TestCLIContractSyncRejectsDuplicateImportedRequestID(t *testing.T) {
+	url := syncTestBareRemote(t)
+	a := syncTestProject(t, url, "worklogs/api")
+	a.mustCall(t, []byte("# First\\n"), "create", "Notes/first.md", "--request-id", "same-01", "--json")
+	syncTestStatus(t, a, "published")
+
+	root := t.TempDir()
+	syncTestGit(t, "clone", "-q", "--branch", "worklogs/api", url, root)
+	syncTestGit(t, "-C", root, "config", "user.name", "External Writer")
+	syncTestGit(t, "-C", root, "config", "user.email", "external@example.invalid")
+	if err := os.MkdirAll(filepath.Join(root, "Notes"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Notes", "second.md"), []byte("# Second\\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	syncTestGit(t, "-C", root, "add", "Notes/second.md")
+	syncTestGit(t, "-C", root, "commit", "-q", "-m", "AWL-AUDIT-V1",
+		"-m", `{"schema":1,"request_id":"same-01"}`)
+	syncTestGit(t, "-C", root, "push", "-q", "origin", "HEAD:refs/heads/worklogs/api")
+	b := syncTestProject(t, url, "worklogs/api")
+	syncTestRejected(t, b, "SYNC_AUDIT_DUPLICATE")
+}
+
+func TestCLIContractSyncRejectsUnsafeTreeWithOtherwiseValidAudit(t *testing.T) {
+	url := syncTestBareRemote(t)
+	a := syncTestProject(t, url, "worklogs/api")
+	a.mustCall(t, []byte("# First\\n"), "create", "Notes/first.md", "--json")
+	syncTestStatus(t, a, "published")
+
+	root := t.TempDir()
+	syncTestGit(t, "clone", "-q", "--branch", "worklogs/api", url, root)
+	syncTestGit(t, "-C", root, "config", "user.name", "External Writer")
+	syncTestGit(t, "-C", root, "config", "user.email", "external@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "unsupported.txt"), []byte("unsafe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	syncTestGit(t, "-C", root, "add", "unsupported.txt")
+	syncTestGit(t, "-C", root, "commit", "-q", "-m", "AWL-AUDIT-V1",
+		"-m", `{"schema":1,"request_id":"external-02"}`)
+	syncTestGit(t, "-C", root, "push", "-q", "origin", "HEAD:refs/heads/worklogs/api")
+	b := syncTestProject(t, url, "worklogs/api")
+	syncTestRejected(t, b, "SYNC_UNSAFE_REMOTE_TREE")
+}
+
 func TestCLIContractSyncRejectsUnsupportedMergeOption(t *testing.T) {
 	c := fixture(t)
 	rc, out, stderr := c.call(nil, "sync", "--allow-unrelated-histories", "--json")
