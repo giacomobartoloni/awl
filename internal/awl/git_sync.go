@@ -283,6 +283,13 @@ func syncFastForward(p project) (status, local, remote string, err error) {
 		if err = verifyRemote(p, remote); err != nil {
 			return "", "", "", err
 		}
+		now, e := headCommit(p)
+		if e != nil {
+			return "", "", "", e
+		}
+		if now != remote {
+			return "local_pending", now, remote, nil
+		}
 		return "up_to_date", local, remote, nil
 	}
 	if ok, e := gitAncestor(p, remote, local); e != nil {
@@ -313,6 +320,13 @@ func syncFastForward(p project) (status, local, remote string, err error) {
 	if err = verifyRemote(p, remote); err != nil {
 		return "", "", "", err
 	}
+	now, e := headCommit(p)
+	if e != nil {
+		return "", "", "", e
+	}
+	if now != remote {
+		return "local_pending", now, remote, nil
+	}
 	if isAncestor {
 		return "fast_forwarded", remote, remote, nil
 	}
@@ -333,10 +347,12 @@ func publishRemote(p project, local, before string) (status, newLocal, remote st
 		return "", "", "", fail("SYNC_OUTCOME_UNKNOWN", "push outcome cannot be verified; retry sync")
 	}
 	if seen != local {
-		if pushErr != nil {
-			return "", "", "", fail("SYNC_PUSH_FAILED", "remote rejected or did not accept the commit; local history is preserved: "+pushErr.Error())
+		if pushErr != nil && seen == before {
+			return "", "", "", fail("SYNC_PUSH_FAILED", "remote rejected the update; local history is preserved: "+pushErr.Error())
 		}
-		return "", "", "", fail("SYNC_REMOTE_CHANGED", "remote branch changed after push; retry sync")
+		// The destination moved while the push was in flight. It might now
+		// include the intended commit, so do not report a proven failure.
+		return "", "", "", fail("SYNC_OUTCOME_UNKNOWN", "remote changed during publication; retry sync to observe ancestry")
 	}
 	if e = checkpointRemote(p, seen); e != nil {
 		return "", "", "", e
@@ -347,9 +363,6 @@ func publishRemote(p project, local, before string) (status, newLocal, remote st
 	}
 	if actual != local {
 		return "local_pending", actual, seen, nil
-	}
-	if before == "" {
-		return "published", local, seen, nil
 	}
 	return "published", local, seen, nil
 }
