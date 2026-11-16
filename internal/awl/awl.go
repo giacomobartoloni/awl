@@ -1,5 +1,5 @@
-// Package awl contains an experimental local-only Git-backed document CLI.
-// This is a bounded Linux mechanism spike, not a production persistence contract.
+// Package awl contains the experimental local-first Git-backed document CLI.
+// Its Git remote sync currently supports only safe fast-forward workflows.
 package awl
 
 import (
