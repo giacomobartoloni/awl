@@ -191,6 +191,20 @@ func TestCLIContractRemoteBranchRepairsInterruptedConfig(t *testing.T) {
 	}
 }
 
+func TestCLIContractInitBranchWithoutURLHasNoSideEffects(t *testing.T) {
+	c := fixture(t)
+	rc, out, stderr := c.call(nil, "init", "--slug", "demo", "--remote-branch", "worklogs/demo", "--json")
+	if rc != 2 || stderr != "" || !bytes.Contains(out, []byte("REMOTE_REQUIRED")) {
+		t.Fatalf("branch-only init should fail: exit=%d stdout=%q stderr=%q", rc, out, stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(c.Source, ".awl")); !os.IsNotExist(err) {
+		t.Fatalf("invalid init created source configuration: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(c.Source, ".git", "awl")); !os.IsNotExist(err) {
+		t.Fatalf("invalid init created canonical binding: %v", err)
+	}
+}
+
 func TestCLIContractRemoteBranchDetectsProjectBindingMismatch(t *testing.T) {
 	c := fixture(t)
 	url := "git@example.invalid:team/worklogs.git"
