@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -33,7 +34,7 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	// Synchronizers for one source repository serialize against each other.
 	// Local request writers use their own guarded Git ref publication and
 	// never wait for this network operation's lock.
-	unlock, e := flock(p.Common + "/awl/sync.lock")
+	unlock, e := flock(filepath.Join(p.Common, "awl", "sync.lock"))
 	if e != nil {
 		return c.emitError(e)
 	}
