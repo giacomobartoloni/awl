@@ -255,11 +255,9 @@ func metadataApply(contents []byte, edits []metadataEdit) ([]byte, error) {
 			return nil, err
 		}
 		if edit.Action == "insert" {
+			// insertSequence already reparses and verifies the resulting YAML.
 			working, err = fm.insertSequence(edit.Pointer, edit.Value)
 			if err != nil {
-				return nil, err
-			}
-			if _, err := parseYAMLFrontmatter(working); err != nil {
 				return nil, err
 			}
 			continue
