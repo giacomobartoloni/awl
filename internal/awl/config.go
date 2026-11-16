@@ -189,7 +189,8 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 
 // initializeWithBranch leaves legacy projects on the "awl" remote branch.
 func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit string) (project, error) {
-	if requestedBranch != "" {
+	branchProvided := requestedBranch != ""
+	if branchProvided {
 		if e := validRemoteBranch(requestedBranch); e != nil {
 			return project{}, e
 		}
@@ -264,7 +265,10 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 		if remote != "" && remote != existingRemote {
 			return project{}, fail("REMOTE_CHANGE_REQUIRES_COMMAND", "use awl remote add to configure an unconfigured remote; replacing an existing remote is unsupported")
 		}
-		if requestedBranch != "" && requestedBranch != existingBranch {
+		if branchProvided && existingRemote == "" {
+			return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
+		}
+		if branchProvided && requestedBranch != existingBranch {
 			return project{}, fail("REMOTE_ALREADY_CONFIGURED", "changing the remote branch requires a separate migration")
 		}
 		slug, remote, requestedBranch = existingSlug, existingRemote, existingBranch
@@ -279,7 +283,7 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 	if e = validRemote(remote); e != nil {
 		return project{}, e
 	}
-	if requestedBranch != "" && remote == "" {
+	if branchProvided && remote == "" {
 		return project{}, fail("REMOTE_REQUIRED", "--remote-branch requires a remote URL")
 	}
 	remoteBranch := requestedBranch
