@@ -90,7 +90,9 @@ func TestCLIContractSyncPristineAdoptionAndFastForwardBetweenComputers(t *testin
 	first := a.mustCall(t, []byte("# First computer\n"), "create", "Notes/a.md", "--request-id", "a-01", "--json")
 	syncTestStatus(t, a, "published")
 
-	b := syncTestProject(t, url, "worklogs/api")
+	b := fixture(t)
+	b.git(t, "config", "user.name", "Second Machine")
+	b.mustCall(t, nil, "init", "--slug", "demo", "--remote", url, "--remote-branch", "worklogs/api", "--json")
 	empty, err := resolveFromFixture(b)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +194,7 @@ func TestCLIContractSyncNeverRecreatesDeletedVerifiedBranch(t *testing.T) {
 	syncTestStatus(t, c, "published")
 	syncTestGit(t, "--git-dir="+url, "update-ref", "-d", "refs/heads/worklogs/api")
 	syncTestRejected(t, c, "SYNC_REMOTE_DELETED")
-	if out := syncTestGit(t, "--git-dir="+url, "show-ref"); strings.Contains(out, "worklogs/api") {
+	if out := syncTestGit(t, "--git-dir="+url, "for-each-ref", "--format=%(refname)", "refs/heads/worklogs/api"); out != "" {
 		t.Fatal("sync silently recreated a previously verified deleted branch")
 	}
 	if string(c.read(t, "Notes/keep.md")) != "# Keep\n" {
