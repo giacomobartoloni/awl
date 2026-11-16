@@ -25,16 +25,16 @@ type diagnostic struct {
 	Message string `json:"message"`
 }
 type result struct {
-	RemoteCommit string    `json:"remote_commit,omitempty"`
-	RemoteBranch string    `json:"remote_branch,omitempty"`
-	Status    string      `json:"status"`
-	Project   string      `json:"project,omitempty"`
-	RequestID string      `json:"request_id,omitempty"`
-	Commit    string      `json:"commit,omitempty"`
-	Tree      string      `json:"document_tree,omitempty"`
-	Replayed  bool        `json:"replayed,omitempty"`
-	Members   []member    `json:"members,omitempty"`
-	Error     *diagnostic `json:"error,omitempty"`
+	Status       string      `json:"status"`
+	Project      string      `json:"project,omitempty"`
+	RequestID    string      `json:"request_id,omitempty"`
+	Commit       string      `json:"commit,omitempty"`
+	RemoteCommit string      `json:"remote_commit,omitempty"`
+	RemoteBranch string      `json:"remote_branch,omitempty"`
+	Tree         string      `json:"document_tree,omitempty"`
+	Replayed     bool        `json:"replayed,omitempty"`
+	Members      []member    `json:"members,omitempty"`
+	Error        *diagnostic `json:"error,omitempty"`
 }
 type member struct {
 	ID     string      `json:"id"`
