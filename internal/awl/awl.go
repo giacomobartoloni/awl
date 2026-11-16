@@ -437,11 +437,13 @@ func pathFlagsFirst(args []string) []string {
 // must not cause their literal "--json" argument to enable JSON output.
 func requestedJSONErrorMode(args []string) (seen, enabled bool) {
 	for i := 0; i < len(args); i++ {
-		switch arg := args[i]; {
-		case arg == "--slug" || arg == "--remote" || arg == "--repo-dir" || arg == "--remote-branch" || arg == "--branch" || arg == "--input" || arg == "--request-id":
+		if cliFlagTakesValue(args[i]) {
 			if i+1 < len(args) {
 				i++
 			}
+			continue
+		}
+		switch arg := args[i]; {
 		case arg == "--json" || arg == "-json":
 			seen, enabled = true, true
 		case strings.HasPrefix(arg, "--json=") || strings.HasPrefix(arg, "-json="):
