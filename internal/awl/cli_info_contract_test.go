@@ -71,3 +71,31 @@ func TestCLIContractHelpAndVersionRejectAmbiguousInvocations(t *testing.T) {
 		t.Fatalf("invalid info command created configuration: %v", err)
 	}
 }
+
+func TestCLIContractFlagLikeValuesAreNotOptions(t *testing.T) {
+	c := fixture(t)
+	for _, value := range []string{"--help", "--json"} {
+		for _, tc := range []struct {
+			name string
+			args []string
+		}{
+			{"slug", []string{"init", "--slug", value, "--invalid"}},
+			{"repo-dir", []string{"init", "--repo-dir", value, "--invalid"}},
+			{"remote", []string{"init", "--remote", value, "--invalid"}},
+			{"remote-branch", []string{"init", "--remote-branch", value, "--invalid"}},
+			{"branch", []string{"remote", "add", "git@example.invalid:worklog.git", "--branch", value, "--invalid"}},
+			{"input", []string{"apply", "--input", value, "--invalid"}},
+			{"request-id", []string{"create", "Activities/example.md", "--request-id", value, "--invalid"}},
+		} {
+			t.Run(value+"/"+tc.name, func(t *testing.T) {
+				rc, out, stderr := c.call(nil, tc.args...)
+				if rc != 2 || len(out) != 0 || !strings.Contains(stderr, "USAGE") {
+					t.Errorf("awl %v: flag value must not enable help or JSON errors: exit=%d stdout=%q stderr=%q", tc.args, rc, out, stderr)
+				}
+			})
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(c.Source, ".awl")); !os.IsNotExist(err) {
+		t.Fatalf("invalid invocations created project state: %v", err)
+	}
+}
