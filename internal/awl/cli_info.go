@@ -15,9 +15,9 @@ const globalHelp = "Usage:\n  awl [--project SLUG] COMMAND [arguments] [options]
 func infoForCommand(name string) (string, bool) {
 	switch name {
 	case "init":
-		return "Usage: awl [--project SLUG] init [--slug SLUG] [--repo-dir ABSOLUTE_PATH] [--remote GIT_URL] [--json]\n\nInitialize a new local managed Git-backed worklog for the current source Git repository.\n  --slug       Explicit project slug (otherwise inferred from source Git)\n  --repo-dir   Exact path of a NEW managed bare Git repository\n  --remote     Configure a remote URL; no network synchronization occurs\n  --json       Machine-readable result or error\n\nExample:\n  awl init --slug demo --json\n", true
+		return "Usage: awl [--project SLUG] init [--slug SLUG] [--repo-dir ABSOLUTE_PATH] [--remote GIT_URL] [--remote-branch BRANCH] [--json]\n\nInitialize a new local managed Git-backed worklog for the current source Git repository.\n  --slug       Explicit project slug (otherwise inferred from source Git)\n  --repo-dir   Exact path of a NEW managed bare Git repository\n  --remote     Configure a remote URL; no network synchronization occurs\n  --remote-branch  Remote branch (default: awl; requires --remote)\n  --json       Machine-readable result or error\n\nExample:\n  awl init --slug demo --json\n", true
 	case "remote":
-		return "Usage: awl [--project SLUG] remote add GIT_URL [--json]\n\nConfigure the worklog's Git remote URL. Does not fetch or push.\n  --json       Machine-readable result or error\n\nExample:\n  awl remote add git@example.invalid:worklog.git --json\n", true
+		return "Usage: awl [--project SLUG] remote add GIT_URL [--branch BRANCH] [--json]\n\nConfigure the worklog's Git remote URL and branch. Does not fetch or push.\n  --branch     Remote branch (default: awl); cannot change an existing target\n  --json       Machine-readable result or error\n\nExample:\n  awl remote add git@example.invalid:worklog.git --json\n", true
 	case "ls":
 		return "Usage: awl [--project SLUG] ls [DIRECTORY] [--json]\n\nList sorted project-relative Markdown paths from the managed worklog.\n  DIRECTORY    Optional project-relative directory filter\n  --json       Return status, project, revision, and paths\n\nExample:\n  awl ls Activities --json\n", true
 	case "read":
@@ -63,7 +63,7 @@ func (c *cli) handleInfo(args []string) (int, bool) {
 func helpRequested(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--slug", "--repo-dir", "--remote", "--input", "--request-id":
+		case "--slug", "--repo-dir", "--remote", "--remote-branch", "--branch", "--input", "--request-id":
 			// A value equal to --help is not a help request.
 			if i+1 < len(args) {
 				i++
