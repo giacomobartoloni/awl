@@ -23,7 +23,7 @@ When several coding agents contribute to a project, it's easy to lose track of *
 
 **`awl` (AgentWorklog CLI)** helps a team maintain a clear, durable **work log of coding-agent activity**. It provides explicit commands to create, read, and update project-scoped Markdown records: activities, notes, plans, decisions, or other documents your team uses.
 
-The records remain plain Markdown with YAML frontmatter, readable by people and agents alike. `awl` works locally and is independent of any particular coding-agent harness. **Automatic session capture and synchronization between teammates are not implemented yet**; agents record their work through explicit CLI operations.
+The records remain plain Markdown with YAML frontmatter, readable by people and agents alike. `awl` works locally and is independent of any particular coding-agent harness. **Automatic session capture and background synchronization are not implemented**; agents record their work through explicit CLI operations, and a first explicit fast-forward-only Git sync is available.
 
 ## The idea, in four lines
 
@@ -149,8 +149,11 @@ Alternatively use `awl init --slug my-project --remote URL --remote-branch workl
 | Read or change YAML frontmatter | `awl metadata get ...` (also `set`, `insert`, `remove`) |
 | Apply ordered operations | `awl apply --input request.json` |
 | Configure a remote Git target | `awl remote add URL [--branch BRANCH]` |
+| Explicit safe Git synchronization | `awl sync [--json]` |
 
 Most operational commands support `--json`. Mutation commands support request IDs for safely recognizing an identical retry; an `apply` request can **partially succeed**, so always inspect its per-operation results. `awl remote add` saves a Git remote URL and optional branch name—it **does not synchronize** anything. The default remote branch is `awl`; a team can choose `worklogs/api` or `worklogs/web` in the same remote Git repository while keeping the histories independent. A project always has one authoritative remote URL-and-branch target. Changing that target after configuration requires a separately designed migration, not another `remote add`. No per-project access isolation is provided by Git branches; repository access typically covers all branches.
+
+`awl sync` now supports first non-forcing publication to an absent branch, fast-forward publication and import, and adoption from a recognized pristine local bootstrap. It verifies the selected remote ref and preserves acknowledged local commits on errors. **Divergent histories, unrelated meaningful histories, merge commits, history rewrites and `--allow-unrelated-histories` are not supported in this first increment.** A remote target selected on first use is trusted as a user-configured destination; its branch name does not prove project identity.
 
 For exact syntax, payload formats, return codes, and safety rules, see the [CLI command reference](skills/awl-cli/references/commands.md) and [metadata reference](skills/awl-cli/references/metadata.md).
 
@@ -172,13 +175,13 @@ Your team's project / agent workspace
 
 The CLI keeps worklog operations explicit and project-scoped. It does **not** require Obsidian, Google Drive, a daemon, or an agent-specific SDK. Teams can adopt their own Markdown conventions for describing an agent's objective, progress, outcome, and next steps.
 
-Shared synchronization and document retrieval are future directions, **not** features of the current CLI.
+Fully automatic/shared reconciliation and document retrieval remain future directions; the current CLI supports only explicit, fast-forward Git exchange.
 
 ## Project status
 
 **Early-stage / experimental.** The local Go command set, basic document operations, guarded YAML metadata edits, and the [reusable agent skill](skills/awl-cli/SKILL.md) are in the repository. The interface and persistence guarantees may change.
 
-**Not implemented yet:** `awl sync`, remote fetch/reconcile/push, and integrated document search/indexing. Hardening for crash/power-loss recovery, concurrency edge cases, and platform support remains open. A cross-platform GitHub Releases packaging workflow is under review; no public release has been published. No production durability guarantee is claimed.
+**Not implemented yet:** conservative merge for divergent or unrelated meaningful histories, automatic background synchronization, and integrated document search/indexing. Hardening for crash/power-loss recovery, concurrency edge cases, and platform support remains open. A cross-platform GitHub Releases packaging workflow is under review; no public release has been published. No production durability guarantee is claimed.
 
 If you are evaluating `awl`, use disposable data first and keep independent backups of anything important.
 
