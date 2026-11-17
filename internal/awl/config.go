@@ -116,7 +116,11 @@ func atomicNewFile(path string, content []byte) error {
 	}
 	return os.Link(tempPath, path)
 }
-func validateOptionalLocalLink(root, common string, allowUnignored bool) error {
+func validateOptionalLocalLink(root, common string) error {
+	return validateOptionalLocalLinkWithIgnore(root, common, false)
+}
+
+func validateOptionalLocalLinkWithIgnore(root, common string, allowUnignored bool) error {
 	link := filepath.Join(root, ".awl", "local.yaml")
 	st, e := os.Lstat(link)
 	if os.IsNotExist(e) {
@@ -211,7 +215,7 @@ func resolve(explicit string) (project, error) {
 	if bind.Slug != slug || bind.Remote != remote || bind.RemoteBranch != branch {
 		return project{}, fail("PROJECT_CONFLICT", "source configuration differs from initialized canonical binding")
 	}
-	if e = validateOptionalLocalLink(root, common, false); e != nil {
+	if e = validateOptionalLocalLink(root, common); e != nil {
 		return project{}, e
 	}
 	st, e := os.Lstat(bind.LocalRepo)

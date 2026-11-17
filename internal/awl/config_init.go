@@ -84,7 +84,7 @@ func initializeWithBranchAndIgnore(slug, remote, requestedBranch, repoDir, expli
 		return project{}, e
 	}
 	projPath := filepath.Join(configDir, "project.yaml")
-	if e = validateOptionalLocalLink(root, common, updateGitignore); e != nil {
+	if e = validateOptionalLocalLinkWithIgnore(root, common, updateGitignore); e != nil {
 		return project{}, e
 	}
 	if st, check := os.Lstat(projPath); check == nil && st.Mode()&os.ModeSymlink != 0 {
