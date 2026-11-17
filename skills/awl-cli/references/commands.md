@@ -21,9 +21,11 @@ awl init --slug demo --repo-dir /absolute/new-store/demo.git --json
 awl remote add https://example.invalid/managed.git --json
 # One remote repository, independent project-specific branch:
 awl remote add https://example.invalid/team-worklogs.git --branch worklogs/demo --json
+# Before verifying/publishing remote history, change only the selected branch:
+awl remote set-branch worklog/demo --json
 ```
 
-The `--branch` option on `remote add` and `--remote-branch` on `init` accept Git branch names, not full `refs/heads/*` names. `remote add` is idempotent for the same destination; changing an existing URL or branch requires a separately reviewed migration. Branch names are checked locally, and neither command contacts the remote. A branch name is a destination selector, not proof of project identity or access segregation.
+The `--branch` option on `remote add` and `--remote-branch` on `init` accept Git branch names, not full `refs/heads/*` names. `remote add` is idempotent for the same destination. `remote set-branch BRANCH [--json]` changes only an existing configured branch, including the implicit default `awl`; it never changes the URL, local managed history, or remote Git data. Both YAML bindings are updated conservatively under locks. The command can complete a retry after a one-file interruption when project slug and URL still match; unrelated binding conflicts fail closed. A last-verified remote history checkpoint blocks switching branches (`REMOTE_BRANCH_MIGRATION_REQUIRED`), so migration after a successful sync is deferred. Branch names are checked locally and neither configuration command contacts the remote. A branch name is a destination selector, not proof of project identity or access segregation.
 
 The optional leading `awl --project demo ...` is an identity check against the **currently resolved** source project, not out-of-repository project discovery.
 
@@ -127,7 +129,7 @@ Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `d
 awl sync --json
 ```
 
-- `awl sync` operates only on the URL and branch configured with `awl init --remote` or `awl remote add`. It never uses the source repository's Git remote implicitly.
+- `awl sync` operates only on the URL and branch configured with `awl init --remote`, `awl remote add`, or a permitted `awl remote set-branch`. It obtains the sync lock before resolving the branch, so it cannot observe a half-written branch change. It never uses the source repository's Git remote implicitly.
 - Initial publication creates a previously absent selected branch; an existing branch may be updated only by non-forcing fast-forward push. The CLI fetches only the selected branch.
 - A local **pristine bootstrap** (exactly one unparented `awl bootstrap` commit with empty tree) can adopt an existing compatible remote history. Even a single audit-only commit disqualifies local history from automatic replacement.
 - If the remote is ahead in the same history, the managed local ref is advanced conditionally. If local and remote both changed independently, sync returns `SYNC_DIVERGED` and preserves accepted local history. This initial slice does not merge; `--allow-unrelated-histories` is not yet supported.

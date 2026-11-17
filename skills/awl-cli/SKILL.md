@@ -34,7 +34,7 @@ Use `awl` to manage Markdown documents associated with the current project. The 
 - A leading `--project SLUG` confirms the current project; it does not select an unrelated repository.
 - `awl metadata set` changes existing supported fields; it does not add missing keys. Unsupported YAML layouts must not be silently rewritten.
 - Ordered `apply` requests may partially succeed. Never report `partial` as full success.
-- `awl remote add` only configures a URL. It does not fetch, push, or synchronize documents.
+- `awl remote add` configures the URL and optional branch. `awl remote set-branch BRANCH` changes only a pre-verification branch binding. Neither command fetches, pushes, or synchronizes documents; do not bypass the verified-history migration guard.
 - The CLI has documented limitations around concurrent sequence insertions and power-loss durability. Avoid destructive recovery or automatic data migration.
 
 ## Detailed references

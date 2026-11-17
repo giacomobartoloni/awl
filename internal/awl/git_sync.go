@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,30 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
 		return c.emitError(fail("USAGE", "sync accepts only --json; merge and unrelated-history options are not implemented"))
 	}
+	// Resolve the project only after taking the sync lock. A branch update
+	// holds that lock for both config writes, so sync cannot use a stale target.
+	_, common, e := source()
+	if e != nil {
+		return c.emitError(e)
+	}
+	// Do not create synchronization lock state in an uninitialized source
+	// repository. The canonical directory is created only by explicit init.
+	commonDir := filepath.Join(common, "awl")
+	st, e := os.Lstat(commonDir)
+	if os.IsNotExist(e) {
+		return c.emitError(fail("PROJECT_NOT_INITIALIZED", "run awl init before syncing"))
+	}
+	if e != nil {
+		return c.emitError(e)
+	}
+	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+		return c.emitError(fail("UNSAFE_PATH", "canonical awl configuration directory is unsafe"))
+	}
+	unlock, e := flock(filepath.Join(commonDir, "sync.lock"))
+	if e != nil {
+		return c.emitError(e)
+	}
+	defer unlock()
 	p, e := resolve(c.explicit)
 	if e != nil {
 		return c.emitError(e)
@@ -31,14 +56,6 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	if p.Remote == "" {
 		return c.emitError(fail("REMOTE_NOT_CONFIGURED", "configure a Git remote with awl remote add before syncing"))
 	}
-	// Synchronizers for one source repository serialize against each other.
-	// Local request writers use their own guarded Git ref publication and
-	// never wait for this network operation's lock.
-	unlock, e := flock(filepath.Join(p.Common, "awl", "sync.lock"))
-	if e != nil {
-		return c.emitError(e)
-	}
-	defer unlock()
 
 	status, local, remote, e := syncFastForward(p)
 	if e != nil {
