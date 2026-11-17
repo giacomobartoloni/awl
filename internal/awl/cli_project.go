@@ -41,8 +41,31 @@ func (c *cli) commandInit(fs *flag.FlagSet, args []string) int {
 func (c *cli) commandRemote(fs *flag.FlagSet, args []string) int {
 	fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 	remoteBranch := fs.String("branch", "", "optional remote branch name (default: awl)")
-	if e := fs.Parse(args); e != nil || fs.NArg() != 2 || fs.Arg(0) != "add" {
-		return c.emitError(fail("USAGE", "remote add requires one Git URL and optional --branch and --json"))
+	if e := fs.Parse(args); e != nil || fs.NArg() != 2 {
+		return c.emitError(fail("USAGE", "expected remote add URL [--branch BRANCH] or remote set-branch BRANCH [--json]"))
+	}
+	if fs.Arg(0) == "set-branch" {
+		provided := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "branch" {
+				provided = true
+			}
+		})
+		if provided {
+			return c.emitError(fail("USAGE", "remote set-branch takes a positional branch, not --branch"))
+		}
+		p, changed, err := setRemoteBranch(fs.Arg(1), c.explicit)
+		if err != nil {
+			return c.emitError(err)
+		}
+		status := "remote_branch_updated"
+		if !changed {
+			status = "remote_branch_unchanged"
+		}
+		return c.emit(result{Status: status, Project: p.Slug, RemoteBranch: p.RemoteBranch})
+	}
+	if fs.Arg(0) != "add" {
+		return c.emitError(fail("USAGE", "expected remote add URL or remote set-branch BRANCH"))
 	}
 	branchProvided := false
 	fs.Visit(func(f *flag.Flag) {
