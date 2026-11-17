@@ -3,6 +3,7 @@ package awl
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -194,5 +195,16 @@ func TestCLIContractRemoteSetBranchRejectsMissingManagedStore(t *testing.T) {
 		if err != nil || strings.Contains(string(body), "remoteBranch:") {
 			t.Fatalf("modified binding despite missing managed store: %s %v", path, err)
 		}
+	}
+}
+
+func TestCLIContractSyncDoesNotInitializeSourceWhenUnconfigured(t *testing.T) {
+	c := fixture(t)
+	rc, out, _ := c.call(nil, "sync", "--json")
+	if rc != 2 || !bytes.Contains(out, []byte("PROJECT_NOT_INITIALIZED")) {
+		t.Fatalf("sync without init returned unexpected result: %d %q", rc, out)
+	}
+	if _, err := os.Lstat(filepath.Join(c.Source, ".git", "awl")); !os.IsNotExist(err) {
+		t.Fatalf("sync before init created canonical state: %v", err)
 	}
 }
