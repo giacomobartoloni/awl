@@ -117,6 +117,10 @@ func atomicNewFile(path string, content []byte) error {
 	return os.Link(tempPath, path)
 }
 func validateOptionalLocalLink(root, common string) error {
+	return validateOptionalLocalLinkWithIgnore(root, common, false)
+}
+
+func validateOptionalLocalLinkWithIgnore(root, common string, allowUnignored bool) error {
 	link := filepath.Join(root, ".awl", "local.yaml")
 	st, e := os.Lstat(link)
 	if os.IsNotExist(e) {
@@ -146,8 +150,10 @@ func validateOptionalLocalLink(root, common string) error {
 	if len(tracked) > 0 {
 		return fail("LOCAL_CONFIG_CONFLICT", "worktree local.yaml is tracked by source Git")
 	}
-	if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
-		return fail("LOCAL_CONFIG_NOT_IGNORED", "optional .awl/local.yaml symlink must be excluded from source Git")
+	if !allowUnignored {
+		if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
+			return fail("LOCAL_CONFIG_NOT_IGNORED", "optional .awl/local.yaml symlink must be Git-ignored; run awl init to add the ignore rule")
+		}
 	}
 	return nil
 }

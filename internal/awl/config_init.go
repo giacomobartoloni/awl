@@ -12,6 +12,10 @@ func initialize(slug, remote, repoDir, explicit string) (project, error) {
 
 // initializeWithBranch leaves legacy projects on the "awl" remote branch.
 func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit string) (project, error) {
+	return initializeWithBranchAndIgnore(slug, remote, requestedBranch, repoDir, explicit, false)
+}
+
+func initializeWithBranchAndIgnore(slug, remote, requestedBranch, repoDir, explicit string, updateGitignore bool) (project, error) {
 	branchProvided := requestedBranch != ""
 	if branchProvided {
 		if e := validRemoteBranch(requestedBranch); e != nil {
@@ -80,7 +84,7 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 		return project{}, e
 	}
 	projPath := filepath.Join(configDir, "project.yaml")
-	if e = validateOptionalLocalLink(root, common); e != nil {
+	if e = validateOptionalLocalLinkWithIgnore(root, common, updateGitignore); e != nil {
 		return project{}, e
 	}
 	if st, check := os.Lstat(projPath); check == nil && st.Mode()&os.ModeSymlink != 0 {
@@ -144,6 +148,11 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 		p := project{Root: root, Common: common, Slug: slug, Remote: remote, RemoteBranch: remoteBranch, GitDir: bind.LocalRepo, UserName: user, UserEmail: email}
 		if _, e = headCommit(p); e != nil {
 			return project{}, e
+		}
+		if updateGitignore {
+			if e = ensureLocalConfigIgnored(root); e != nil {
+				return project{}, e
+			}
 		}
 		return p, nil
 	} else if !os.IsNotExist(e) {
@@ -214,6 +223,11 @@ func initializeWithBranch(slug, remote, requestedBranch, repoDir, explicit strin
 	local += fmt.Sprintf("storage:\n  localRepo: %s\n", dest)
 	if e = atomicNewFile(localPath, []byte(local)); e != nil {
 		return project{}, e
+	}
+	if updateGitignore {
+		if e = ensureLocalConfigIgnored(root); e != nil {
+			return project{}, e
+		}
 	}
 	return p, nil
 }
