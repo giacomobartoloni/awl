@@ -307,7 +307,7 @@ func TestCommitMessageAuditAndNoUnexpectedSourceCommit(t *testing.T) {
 
 func TestOptionalLocalSymlinkIsValidOnlyWhenCanonicalAndIgnored(t *testing.T) {
 	c := fixture(t)
-	c.init(t)
+	c.mustCall(t, nil, "init", "--slug", "demo", "--no-update-gitignore", "--json")
 	c.mustCall(t, []byte("present"), "create", "Docs/one.md", "--json")
 	link := filepath.Join(c.Source, ".awl", "local.yaml")
 	if e := os.Symlink(filepath.Join(c.Source, ".git", "awl", "local.yaml"), link); e != nil {
