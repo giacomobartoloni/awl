@@ -8,6 +8,7 @@ This reference describes the currently available `awl` commands. Check `awl --he
 - For an initialized project, inspect with `awl ls --json`. If initialization is missing, stop and request authorization; do not auto-initialize, repair or rebind it.
 - `awl init` is an **explicit bootstrap**, only when authorized. An omitted `--slug` infers a slug from the source repository identity. Optional `--repo-dir` selects an exact **new, absent absolute directory** for a local managed repository; its existing parent must be safe and must already exist. It must not point inside the source worktree or Git common dir.
 - The source project configuration uses `.awl/project.yaml`; a canonical local binding is maintained under the source repository's Git common dir. Do not edit either file by hand.
+- `init` does **not** edit `.gitignore` unless `--update-gitignore` is supplied. The opt-in adds only `.awl/local.yaml` if Git does not already ignore it; it never ignores `.awl/project.yaml`, creates an optional symlink, stages or commits files, or rewrites existing ignore rules. Existing `.gitignore` contents and line endings are preserved; symlinks/nonregular `.gitignore` targets are refused. A previously tracked `.awl/local.yaml` must be untracked explicitly. This source-file edit is not transactional with project initialization.
 - Mutations need Git author name/email (available via Git configuration). Reads and remote configuration do not require author identity.
 - The managed Git store always uses local `refs/heads/awl`. A project's remote target is its configured URL plus remote branch (default: `awl`). Different projects may share a remote repository using distinct branches, with no cross-branch Git history merge or per-project access isolation.
 
@@ -17,6 +18,8 @@ Examples, from an authorized source Git worktree:
 awl ls --json
 # Only for authorized first-time initialization:
 awl init --slug demo --repo-dir /absolute/new-store/demo.git --json
+# Optional explicit update of the source repository ignore rule:
+awl init --update-gitignore --json
 # Configures a URL only; performs no fetch/push/network sync:
 awl remote add https://example.invalid/managed.git --json
 # One remote repository, independent project-specific branch:

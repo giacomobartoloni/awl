@@ -128,6 +128,8 @@ awl read Notes/first-note.md
 
 The project directory supplies **context**; the activity records live in a **separate managed local document store**, not among the project's source files.
 
+`awl init` leaves the source repository's `.gitignore` untouched by default. The shared `.awl/project.yaml` is suitable for version control; the personal binding lives in Git's common directory. If you choose to expose the personal binding via the optional `.awl/local.yaml` symlink, that path must be Git-ignored. Run `awl init --update-gitignore` to explicitly add `.awl/local.yaml` to the source `.gitignore` **only if effective Git ignore rules do not already exclude it**. This never ignores the entire `.awl/` directory, creates no symlink and does not stage or commit files.
+
 Optional setup for a shared team Git repository (configuration only; no fetch or push):
 
 ```sh
@@ -141,7 +143,7 @@ Alternatively use `awl init --slug my-project --remote URL --remote-branch workl
 | What you want to do | Command |
 | --- | --- |
 | Explore usage | `awl --help`, `awl help metadata`, `awl --version` |
-| Initialize project storage | `awl init [--slug NAME]` |
+| Initialize project storage | `awl init [--slug NAME] [--update-gitignore]` |
 | List Markdown documents | `awl ls [DIRECTORY]` |
 | Read a document | `awl read Notes/example.md` |
 | Create without overwriting | `awl create Notes/example.md --input draft.md` |
