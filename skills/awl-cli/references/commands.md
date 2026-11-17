@@ -121,6 +121,22 @@ Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `d
 - Check **both exit code and member statuses**; do not equate `commit` with a changed document tree.
 - For ambiguous outcomes (e.g. `PUBLICATION_OUTCOME_UNKNOWN`), inspect state and retry the **same request ID and bytes**, not a new request.
 - For `CONCURRENT_REQUEST_CONFLICT`, reread before deciding on an action. Never silently overwrite the winner.
-- `awl sync` and out-of-repository project discovery are not available in the current CLI.
+### Explicit Git remote sync
 
-See [metadata](metadata.md) for frontmatter operations. No command here synchronizes a remote or writes Markdown into the source Git working tree.
+```sh
+awl sync --json
+```
+
+- `awl sync` operates only on the URL and branch configured with `awl init --remote` or `awl remote add`. It never uses the source repository's Git remote implicitly.
+- Initial publication creates a previously absent selected branch; an existing branch may be updated only by non-forcing fast-forward push. The CLI fetches only the selected branch.
+- A local **pristine bootstrap** (exactly one unparented `awl bootstrap` commit with empty tree) can adopt an existing compatible remote history. Even a single audit-only commit disqualifies local history from automatic replacement.
+- If the remote is ahead in the same history, the managed local ref is advanced conditionally. If local and remote both changed independently, sync returns `SYNC_DIVERGED` and preserves accepted local history. This initial slice does not merge; `--allow-unrelated-histories` is not yet supported.
+- The current importer validates linear `AWL-AUDIT-V1` histories, recognized empty roots, unique request IDs and ordinary Markdown blobs. It rejects unsupported merge commits, foreign paths or unsupported history rather than normalizing user data.
+- After a push, the remote ref is read back before publication is confirmed. A failed or lost push response whose outcome cannot be observed returns `SYNC_OUTCOME_UNKNOWN`; retry `awl sync` explicitly. A last-verified remote Git reference blocks silent branch deletion or non-descendant rewrites. Sync does not create a user request-audit commit.
+- JSON reports `status`, `project`, `commit` (local), `remote_commit` and `remote_branch`; expected statuses include `published`, `up_to_date`, `fast_forwarded`, `adopted` and `local_pending`. Error JSON has `status:error` and a structured error code.
+- Project authentication, Git hosting authorization, SSH agent configuration and remote repository access are provided by Git; `awl` does not store credentials. Remote transport failures do not invalidate successful offline writes.
+- `awl sync` and out-of-repository project discovery are separate concerns; only the latter remains unavailable.
+
+See `awl help sync` for the current command syntax.
+
+See [metadata](metadata.md) for frontmatter operations. Only `awl sync` exchanges data with the authoritative remote; no operation writes Markdown into the source Git working tree.

@@ -1,5 +1,5 @@
-// Package awl contains an experimental local-only Git-backed document CLI.
-// This is a bounded Linux mechanism spike, not a production persistence contract.
+// Package awl contains the experimental local-first Git-backed document CLI.
+// Its Git remote sync currently supports only safe fast-forward workflows.
 package awl
 
 import (
@@ -25,14 +25,16 @@ type diagnostic struct {
 	Message string `json:"message"`
 }
 type result struct {
-	Status    string      `json:"status"`
-	Project   string      `json:"project,omitempty"`
-	RequestID string      `json:"request_id,omitempty"`
-	Commit    string      `json:"commit,omitempty"`
-	Tree      string      `json:"document_tree,omitempty"`
-	Replayed  bool        `json:"replayed,omitempty"`
-	Members   []member    `json:"members,omitempty"`
-	Error     *diagnostic `json:"error,omitempty"`
+	Status       string      `json:"status"`
+	Project      string      `json:"project,omitempty"`
+	RequestID    string      `json:"request_id,omitempty"`
+	Commit       string      `json:"commit,omitempty"`
+	RemoteCommit string      `json:"remote_commit,omitempty"`
+	RemoteBranch string      `json:"remote_branch,omitempty"`
+	Tree         string      `json:"document_tree,omitempty"`
+	Replayed     bool        `json:"replayed,omitempty"`
+	Members      []member    `json:"members,omitempty"`
+	Error        *diagnostic `json:"error,omitempty"`
 }
 type member struct {
 	ID     string      `json:"id"`
@@ -104,7 +106,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return exit
 	}
 	if len(args) == 0 {
-		return c.emitError(fail("USAGE", "expected init, remote, ls, read, create, edit, metadata, or apply"))
+		return c.emitError(fail("USAGE", "expected init, remote, sync, ls, read, create, edit, metadata, or apply"))
 	}
 	name, args := args[0], args[1:]
 	c.errorJSONSeen, c.errorJSON = requestedJSONErrorMode(args)
@@ -118,6 +120,8 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return c.commandInit(fs, args)
 	case "remote":
 		return c.commandRemote(fs, args)
+	case "sync":
+		return c.commandSync(fs, args)
 	case "ls":
 		return c.commandList(fs, args)
 	case "read":
@@ -130,7 +134,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return c.commandApply(fs, args)
 
 	default:
-		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, ls, read, create, edit, metadata, apply"))
+		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, sync, ls, read, create, edit, metadata, apply"))
 	}
 }
 
