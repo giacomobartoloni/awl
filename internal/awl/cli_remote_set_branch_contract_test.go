@@ -11,11 +11,7 @@ func TestCLIContractRemoteSetBranchPreservesManagedHistory(t *testing.T) {
 	c := fixture(t)
 	url := "git@example.invalid:team/worklogs.git"
 	c.mustCall(t, nil, "init", "--slug", "demo", "--remote", url, "--json")
-	created := c.mustCall(t, []byte("---
-status: active
----
-# Keep
-"), "create", "Notes/keep.md", "--json")
+	created := c.mustCall(t, []byte("---\nstatus: active\n---\n# Keep\n"), "create", "Notes/keep.md", "--json")
 	shared, local := remoteBranchPaths(c)
 	before, err := parseLocal(local)
 	if err != nil {
@@ -37,11 +33,7 @@ status: active
 	if err != nil || head != created.Commit {
 		t.Fatalf("local document history changed: %s %v", head, err)
 	}
-	if string(c.read(t, "Notes/keep.md")) != "---
-status: active
----
-# Keep
-" {
+	if string(c.read(t, "Notes/keep.md")) != "---\nstatus: active\n---\n# Keep\n" {
 		t.Fatal("document bytes changed")
 	}
 	if got := c.mustCall(t, nil, "remote", "set-branch", "awl", "--json"); got.Status != "remote_branch_updated" {
@@ -66,10 +58,7 @@ func TestCLIContractRemoteSetBranchPreservesCommentsAndCRLF(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		withComments := append([]byte("# User-owned comment
-"), bytes.ReplaceAll(original, []byte("
-"), []byte("
-"))...)
+		withComments := append([]byte("# User-owned comment\r\n"), bytes.ReplaceAll(original, []byte("\n"), []byte("\r\n"))...)
 		if err := os.WriteFile(path, withComments, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -78,13 +67,9 @@ func TestCLIContractRemoteSetBranchPreservesCommentsAndCRLF(t *testing.T) {
 	assertRemoteBranch(t, c, url, "worklog/awl")
 	for _, path := range []string{shared, local} {
 		content, err := os.ReadFile(path)
-		if err != nil || !bytes.HasPrefix(content, []byte("# User-owned comment
-")) ||
-			!bytes.Contains(content, []byte("  remoteBranch: worklog/awl
-")) ||
-			bytes.Contains(bytes.ReplaceAll(content, []byte("
-"), nil), []byte("
-")) {
+		if err != nil || !bytes.HasPrefix(content, []byte("# User-owned comment\r\n")) ||
+			!bytes.Contains(content, []byte("  remoteBranch: worklog/awl\r\n")) ||
+			bytes.Contains(bytes.ReplaceAll(content, []byte("\r\n"), nil), []byte("\n")) {
 			t.Fatalf("rewrote unrelated bytes or line endings: %s: %q %v", path, content, err)
 		}
 	}
@@ -170,8 +155,7 @@ func TestCLIContractRemoteSetBranchRejectsUnsafeRequests(t *testing.T) {
 func TestCLIContractRemoteSetBranchRejectsVerifiedSyncCheckpoint(t *testing.T) {
 	remote := syncTestBareRemote(t)
 	c := syncTestProject(t, remote, "awl")
-	c.mustCall(t, []byte("# Accepted locally
-"), "create", "Notes/keep.md", "--json")
+	c.mustCall(t, []byte("# Accepted locally\n"), "create", "Notes/keep.md", "--json")
 	published := syncTestStatus(t, c, "published")
 	rc, out, stderr := c.call(nil, "remote", "set-branch", "worklog/awl", "--json")
 	if rc != 2 || stderr != "" || !bytes.Contains(out, []byte("REMOTE_BRANCH_MIGRATION_REQUIRED")) {
@@ -181,8 +165,7 @@ func TestCLIContractRemoteSetBranchRejectsVerifiedSyncCheckpoint(t *testing.T) {
 	if current := syncTestTip(t, remote, "awl"); current != published.Commit {
 		t.Fatalf("remote history changed: %q vs %q", current, published.Commit)
 	}
-	if string(c.read(t, "Notes/keep.md")) != "# Accepted locally
-" {
+	if string(c.read(t, "Notes/keep.md")) != "# Accepted locally\n" {
 		t.Fatal("local document changed after rejected branch switch")
 	}
 	// Reusing the existing target is always safe, even after verification.
