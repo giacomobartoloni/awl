@@ -152,7 +152,7 @@ func validateOptionalLocalLinkWithIgnore(root, common string, allowUnignored boo
 	}
 	if !allowUnignored {
 		if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
-			return fail("LOCAL_CONFIG_NOT_IGNORED", "ignore .awl/local.yaml in Git or rerun init with --update-gitignore")
+			return fail("LOCAL_CONFIG_NOT_IGNORED", "optional .awl/local.yaml symlink must be Git-ignored; run awl init to add the ignore rule")
 		}
 	}
 	return nil
