@@ -24,6 +24,17 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
 		return c.emitError(fail("USAGE", "sync accepts only --json; merge and unrelated-history options are not implemented"))
 	}
+	// Resolve the project only after taking the sync lock. A branch update
+	// holds that lock for both config writes, so sync cannot use a stale target.
+	_, common, e := source()
+	if e != nil {
+		return c.emitError(e)
+	}
+	unlock, e := flock(filepath.Join(common, "awl", "sync.lock"))
+	if e != nil {
+		return c.emitError(e)
+	}
+	defer unlock()
 	p, e := resolve(c.explicit)
 	if e != nil {
 		return c.emitError(e)
@@ -31,14 +42,6 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	if p.Remote == "" {
 		return c.emitError(fail("REMOTE_NOT_CONFIGURED", "configure a Git remote with awl remote add before syncing"))
 	}
-	// Synchronizers for one source repository serialize against each other.
-	// Local request writers use their own guarded Git ref publication and
-	// never wait for this network operation's lock.
-	unlock, e := flock(filepath.Join(p.Common, "awl", "sync.lock"))
-	if e != nil {
-		return c.emitError(e)
-	}
-	defer unlock()
 
 	status, local, remote, e := syncFastForward(p)
 	if e != nil {
