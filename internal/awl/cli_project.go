@@ -7,9 +7,10 @@ func (c *cli) commandInit(fs *flag.FlagSet, args []string) int {
 	remote := fs.String("remote", "", "authoritative worklog Git remote for new configuration")
 	remoteBranch := fs.String("remote-branch", "", "optional remote branch name (default: awl)")
 	repoDir := fs.String("repo-dir", "", "absolute path for a new managed bare Git repository")
+	updateGitignore := fs.Bool("update-gitignore", false, "explicitly ignore .awl/local.yaml in source Git")
 	fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 	if e := fs.Parse(args); e != nil || fs.NArg() != 0 {
-		return c.emitError(fail("USAGE", "init accepts optional --slug, --remote, --remote-branch, --repo-dir, --json"))
+		return c.emitError(fail("USAGE", "init accepts optional --slug, --remote, --remote-branch, --repo-dir, --update-gitignore, --json"))
 	}
 	repoDirProvided, slugProvided, remoteBranchProvided := false, false, false
 	fs.Visit(func(f *flag.Flag) {
@@ -31,7 +32,7 @@ func (c *cli) commandInit(fs *flag.FlagSet, args []string) int {
 	if remoteBranchProvided && *remoteBranch == "" {
 		return c.emitError(fail("INVALID_REMOTE_BRANCH", "--remote-branch must be a nonempty Git branch"))
 	}
-	p, e := initializeWithBranch(*slug, *remote, *remoteBranch, *repoDir, c.explicit)
+	p, e := initializeWithBranchAndIgnore(*slug, *remote, *remoteBranch, *repoDir, c.explicit, *updateGitignore)
 	if e != nil {
 		return c.emitError(e)
 	}

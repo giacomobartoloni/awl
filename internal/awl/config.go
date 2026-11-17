@@ -116,7 +116,7 @@ func atomicNewFile(path string, content []byte) error {
 	}
 	return os.Link(tempPath, path)
 }
-func validateOptionalLocalLink(root, common string) error {
+func validateOptionalLocalLink(root, common string, allowUnignored bool) error {
 	link := filepath.Join(root, ".awl", "local.yaml")
 	st, e := os.Lstat(link)
 	if os.IsNotExist(e) {
@@ -146,8 +146,10 @@ func validateOptionalLocalLink(root, common string) error {
 	if len(tracked) > 0 {
 		return fail("LOCAL_CONFIG_CONFLICT", "worktree local.yaml is tracked by source Git")
 	}
-	if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
-		return fail("LOCAL_CONFIG_NOT_IGNORED", "optional .awl/local.yaml symlink must be excluded from source Git")
+	if !allowUnignored {
+		if _, e := gitSource(root, "check-ignore", "-q", "--", ".awl/local.yaml"); e != nil {
+			return fail("LOCAL_CONFIG_NOT_IGNORED", "ignore .awl/local.yaml in Git or rerun init with --update-gitignore")
+		}
 	}
 	return nil
 }
@@ -209,7 +211,7 @@ func resolve(explicit string) (project, error) {
 	if bind.Slug != slug || bind.Remote != remote || bind.RemoteBranch != branch {
 		return project{}, fail("PROJECT_CONFLICT", "source configuration differs from initialized canonical binding")
 	}
-	if e = validateOptionalLocalLink(root, common); e != nil {
+	if e = validateOptionalLocalLink(root, common, false); e != nil {
 		return project{}, e
 	}
 	st, e := os.Lstat(bind.LocalRepo)
