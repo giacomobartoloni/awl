@@ -30,7 +30,20 @@ func (c *cli) commandSync(fs *flag.FlagSet, args []string) int {
 	if e != nil {
 		return c.emitError(e)
 	}
-	unlock, e := flock(filepath.Join(common, "awl", "sync.lock"))
+	// Do not create synchronization lock state in an uninitialized source
+	// repository. The canonical directory is created only by explicit init.
+	commonDir := filepath.Join(common, "awl")
+	st, e := os.Lstat(commonDir)
+	if os.IsNotExist(e) {
+		return c.emitError(fail("PROJECT_NOT_INITIALIZED", "run awl init before syncing"))
+	}
+	if e != nil {
+		return c.emitError(e)
+	}
+	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+		return c.emitError(fail("UNSAFE_PATH", "canonical awl configuration directory is unsafe"))
+	}
+	unlock, e := flock(filepath.Join(commonDir, "sync.lock"))
 	if e != nil {
 		return c.emitError(e)
 	}
