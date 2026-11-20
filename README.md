@@ -148,6 +148,7 @@ Alternatively use `awl init --slug my-project --remote URL --remote-branch workl
 | Read a document | `awl read Notes/example.md` |
 | Create without overwriting | `awl create Notes/example.md --input draft.md` |
 | Replace a unique body match | `awl edit Notes/example.md --input edit.json` |
+| Move a managed document (without updating links) | `awl move Notes/example.md Plans/example.md` |
 | Read or change YAML frontmatter | `awl metadata get ...` (also `set`, `insert`, `remove`) |
 | Apply ordered operations | `awl apply --input request.json` |
 | Configure a remote Git target | `awl remote add URL [--branch BRANCH]` |
