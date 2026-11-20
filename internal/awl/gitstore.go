@@ -73,7 +73,10 @@ func writeTree(p project, head string, changes map[string]entry) (string, error)
 		if file.Exists {
 			continue
 		}
-		if _, e = git(p.GitDir, env, nil, "update-index", "--force-remove", "--", name); e != nil {
+		// Bare Git stores have no worktree: remove through index-info, using
+		// NUL-delimited paths to preserve unusual but valid Markdown names.
+		deletion := []byte("0 " + strings.Repeat("0", 40) + "\t" + name + "\x00")
+		if _, e = git(p.GitDir, env, deletion, "update-index", "-z", "--index-info"); e != nil {
 			return "", e
 		}
 	}
