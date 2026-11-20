@@ -67,7 +67,20 @@ func writeTree(p project, head string, changes map[string]entry) (string, error)
 	if _, e = git(p.GitDir, env, nil, "read-tree", head); e != nil {
 		return "", e
 	}
+	// Remove paths before adding new ones so moves can replace a file path
+	// with a directory path (or vice versa) within a single Git tree.
 	for name, file := range changes {
+		if file.Exists {
+			continue
+		}
+		if _, e = git(p.GitDir, env, nil, "update-index", "--force-remove", "--", name); e != nil {
+			return "", e
+		}
+	}
+	for name, file := range changes {
+		if !file.Exists {
+			continue
+		}
 		oid, e := gitText(p.GitDir, nil, file.Bytes, "hash-object", "-w", "--stdin")
 		if e != nil {
 			return "", e
