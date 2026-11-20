@@ -17,6 +17,7 @@ Use `awl` to manage Markdown documents associated with the current project. The 
 | List/read documents | `awl ls [DIRECTORY]`, `awl read DOCUMENT.md` |
 | Create document | `awl create DOCUMENT.md --input FILE --json` |
 | Edit body | `awl edit DOCUMENT.md --input FILE --json` |
+| Move document | `awl move SOURCE.md DESTINATION.md --json` |
 | Edit frontmatter | `awl metadata get/set/insert/remove ...` |
 | Ordered requests | `awl apply --input FILE --json` |
 
@@ -25,7 +26,7 @@ Use `awl` to manage Markdown documents associated with the current project. The 
 1. Check `command -v awl`; inspect `awl --help` or `awl --version` without initializing a project. A development build identifier does not imply a published release.
 2. Run commands from the intended source Git repository or linked worktree. Use `awl ls --json` to verify the resolved `project` and `revision`. Initialize or change project configuration only with explicit authorization.
 3. Read the target document or YAML pointer before editing. Mutations require a Git author identity.
-4. Use the narrowest supported command. `edit` replaces one unique exact match in the Markdown **body**; `metadata` handles supported frontmatter changes. `create` never overwrites an existing document.
+4. Use the narrowest supported command. `edit` replaces one unique exact match in the Markdown **body**; `metadata` handles supported frontmatter changes. `create` never overwrites an existing document. `move` refuses an occupied destination and does not rewrite Markdown links or frontmatter.
 5. Supply a stable `--request-id` for retriable writes. Retry an ambiguous operation only with its **original request ID and identical payload**; inspect current state first.
 6. Check exit code, response `status`, `members` and errors; read back the document to verify changes. A failed or no-op request may still create an audit commit without changing document content.
 
