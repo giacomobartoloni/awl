@@ -57,6 +57,7 @@ This table describes **behavioral operations**, not finalized public method name
 | `document.read` | Project slug, document path, optional excerpt selector | Content/excerpt + local revision + freshness context | Not found, unreadable, invalid path |
 | `document.create` | Project slug, absent path, Markdown content | Created local document revision | Already exists; never silently overwrite |
 | `document.edit` | Project slug, existing path, ordered **body-only** targeted text edits; no caller-supplied file revision | New local revision and applied-edit outcomes | Missing/ambiguous target, unsafe edit |
+| `document.move` (selected 2026-11-20) | Project slug, existing source and absent destination project-relative paths | Exact document bytes relocated in one audited local request | Missing source, occupied destination, invalid path, concurrent change |
 | `metadata.get` | Project slug, path, JSON Pointer | Typed frontmatter value + document revision | Missing target; malformed/ambiguous YAML |
 | `metadata.set` | Project slug, path, JSON Pointer and typed YAML value | Replace existing value, never implicit list insertion | Missing target, unsafe index, parsing failure |
 | `metadata.remove` | Project slug, path, JSON Pointer | Remove map entry or list element (shifts later indexes) | Unverifiable stale position, malformed YAML |
@@ -69,7 +70,9 @@ This table describes **behavioral operations**, not finalized public method name
 
 All writes require a local Git-backed project state; offline writes **must not require remote network availability** once the project has been initialized locally.
 
-**Later / unselected:** unified-diff or Codex-style `apply_patch`, context/hunk matching, hashline editing, a semantic Markdown-section editor, **structured YAML metadata indexing/query/filtering**, document moves/deletes and higher-level worklog lifecycle operations. The core search/indexing requirement is selected, but operation names and search engine remain candidates. No implementation is implied.
+**Later / unselected:** unified-diff or Codex-style `apply_patch`, context/hunk matching, hashline editing, a semantic Markdown-section editor, **structured YAML metadata indexing/query/filtering**, document deletes and higher-level worklog lifecycle operations. The core search/indexing requirement is selected, but operation names and search engine remain candidates. No implementation is implied.
+
+**Document move increment (owner-authorized 2026-11-20):** `awl move SOURCE.md DESTINATION.md` and ordered `move` composite members use the existing Git staging, single-request commit, audit, idempotent replay, and conflict rules. They preserve document bytes and mode and do not analyze or rewrite Markdown links, Obsidian wikilinks, or frontmatter. Relocation is within the same AWL project only. Automatic reference integrity/refactoring remains unselected.
 
 ## 4. Request and response concepts
 

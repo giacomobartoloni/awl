@@ -37,8 +37,25 @@ func (c *cli) writeRequest(req request) int {
 			return c.emitError(e)
 		}
 		o.Path = path
-		if o.Op != "create" && o.Op != "edit" && o.Op != "metadata" {
-			return c.emitError(fail("INVALID_REQUEST", "only create/edit/metadata are in this spike"))
+		switch o.Op {
+		case "create", "edit", "metadata":
+			if o.To != "" {
+				return c.emitError(fail("INVALID_REQUEST", "destination path is only valid for move"))
+			}
+		case "move":
+			to, err := safePath(o.To)
+			if err != nil {
+				return c.emitError(err)
+			}
+			if to == o.Path {
+				return c.emitError(fail("INVALID_REQUEST", "move source and destination must differ"))
+			}
+			o.To = to
+			if o.Content != "" || o.Old != "" || o.New != "" || len(o.Metadata) != 0 {
+				return c.emitError(fail("INVALID_REQUEST", "move accepts only source and destination paths"))
+			}
+		default:
+			return c.emitError(fail("INVALID_REQUEST", "unsupported document operation"))
 		}
 		if o.Op == "metadata" {
 			if e := validateMetadataEdits(o.Metadata); e != nil {
@@ -133,6 +150,17 @@ func (c *cli) writeRequest(req request) int {
 		}
 		// A lost CAS must not overwrite an independently changed YAML target.
 		for _, o := range req.Operations {
+			if o.Op == "move" {
+				// A move must not pick up an intervening change to either path.
+				for _, path := range []string{o.Path, o.To} {
+					before, oldErr := readEntry(p, head, path)
+					after, newErr := readEntry(p, newer, path)
+					if oldErr != nil || newErr != nil || before.Exists != after.Exists ||
+						(before.Exists && (before.OID != after.OID || before.Mode != after.Mode)) {
+						return c.emitError(fail("CONCURRENT_REQUEST_CONFLICT", "concurrent move source or destination changed; reread and resubmit"))
+					}
+				}
+			}
 			if o.Op != "metadata" {
 				continue
 			}
@@ -197,8 +225,31 @@ func stage(p project, head string, ops []operation) ([]member, map[string]entry,
 				return nil, nil, e
 			}
 		}
-		m := member{ID: o.ID, Op: o.Op, Path: o.Path, Status: "applied"}
+		m := member{ID: o.ID, Op: o.Op, Path: o.Path, To: o.To, Status: "applied"}
 		switch o.Op {
+		case "move":
+			if !file.Exists {
+				m.Status = "failed"
+				m.Error = &diagnostic{"DOCUMENT_NOT_FOUND", "document does not exist"}
+				break
+			}
+			target, exists := state[o.To]
+			if !exists {
+				var e error
+				target, e = readEntry(p, head, o.To)
+				if e != nil {
+					return nil, nil, e
+				}
+			}
+			if target.Exists {
+				m.Status = "failed"
+				m.Error = &diagnostic{"DOCUMENT_EXISTS", "destination document already exists"}
+			} else {
+				state[o.To] = file
+				changed[o.To] = file
+				file = entry{}
+				changed[o.Path] = file
+			}
 		case "create":
 			if file.Exists {
 				m.Status = "failed"

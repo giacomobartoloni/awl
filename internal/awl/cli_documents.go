@@ -114,6 +114,24 @@ func (c *cli) commandMutate(name string, fs *flag.FlagSet, args []string) int {
 	return c.writeRequest(request{RequestID: *rid, Operations: []operation{op}})
 }
 
+// commandMove relocates a managed document without interpreting its contents.
+func (c *cli) commandMove(fs *flag.FlagSet, args []string) int {
+	fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
+	rid := fs.String("request-id", "", "stable request ID for retries")
+	if e := fs.Parse(args); e != nil || fs.NArg() != 2 {
+		return c.emitError(fail("USAGE", "move requires source and destination project-relative Markdown paths"))
+	}
+	from, e := safePath(fs.Arg(0))
+	if e != nil {
+		return c.emitError(e)
+	}
+	to, e := safePath(fs.Arg(1))
+	if e != nil {
+		return c.emitError(e)
+	}
+	return c.writeRequest(request{RequestID: *rid, Operations: []operation{{ID: "op-1", Op: "move", Path: from, To: to}}})
+}
+
 func (c *cli) commandApply(fs *flag.FlagSet, args []string) int {
 	fs.BoolVar(&c.jsonOut, "json", false, "machine-readable response")
 	input := fs.String("input", "-", "JSON request input")
