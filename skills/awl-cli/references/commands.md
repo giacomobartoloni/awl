@@ -85,9 +85,20 @@ printf '%s' '{"old":"Draft paragraph","new":"Reviewed paragraph"}' |
 - `old` must match **exactly once in the body**, not in frontmatter. Missing or ambiguous matches fail; unrelated bytes are preserved in supported cases.
 - Do not use `edit` for frontmatter. Use `metadata` as described in [metadata](metadata.md).
 
+## Move a managed document
+
+```sh
+awl move Notes/example.md Plans/example.md --request-id move-example-001 --json
+```
+
+- Both paths are project-relative Markdown paths in the managed Git store, not source-worktree paths.
+- The destination must be absent; the source must exist and differ from the destination.
+- The document's bytes and Git file mode are preserved. No link or frontmatter references are inspected or rewritten, including links inside the moved document.
+- The move uses the existing request audit, retry identity, and concurrency safeguards; a failed collision is reported as an ordinary member failure.
+
 ## Ordered composite requests
 
-Use `awl apply` only when an ordered multi-operation request is needed. The JSON input has a `request_id` and an `operations` array. Supported members are `create`, `edit` and `metadata`.
+Use `awl apply` only when an ordered multi-operation request is needed. The JSON input has a `request_id` and an `operations` array. Supported members are `create`, `edit`, `move` and `metadata`. For a move member, set `path` to the source and `to` to the destination; both paths can be used by later members of the same request.
 
 ```sh
 cat > /tmp/awl-request.json <<'JSON'
