@@ -40,6 +40,7 @@ type member struct {
 	ID     string      `json:"id"`
 	Op     string      `json:"op"`
 	Path   string      `json:"path"`
+	To     string      `json:"to,omitempty"`
 	Status string      `json:"status"`
 	Error  *diagnostic `json:"error,omitempty"`
 }
@@ -47,6 +48,7 @@ type operation struct {
 	ID       string         `json:"id"`
 	Op       string         `json:"op"`
 	Path     string         `json:"path"`
+	To       string         `json:"to,omitempty"`
 	Content  string         `json:"content,omitempty"`
 	Old      string         `json:"old,omitempty"`
 	New      string         `json:"new,omitempty"`
@@ -106,11 +108,11 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return exit
 	}
 	if len(args) == 0 {
-		return c.emitError(fail("USAGE", "expected init, remote, sync, ls, read, create, edit, metadata, or apply"))
+		return c.emitError(fail("USAGE", "expected init, remote, sync, ls, read, create, edit, move, metadata, or apply"))
 	}
 	name, args := args[0], args[1:]
 	c.errorJSONSeen, c.errorJSON = requestedJSONErrorMode(args)
-	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "metadata" || name == "remote" {
+	if name == "ls" || name == "read" || name == "create" || name == "edit" || name == "move" || name == "metadata" || name == "remote" {
 		args = pathFlagsFirst(args)
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -128,13 +130,15 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return c.commandRead(fs, args)
 	case "create", "edit":
 		return c.commandMutate(name, fs, args)
+	case "move":
+		return c.commandMove(fs, args)
 	case "metadata":
 		return c.commandMetadata(fs, args)
 	case "apply":
 		return c.commandApply(fs, args)
 
 	default:
-		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, sync, ls, read, create, edit, metadata, apply"))
+		return c.emitError(fail("USAGE", "unsupported command; experimental slice supports init, remote add, sync, ls, read, create, edit, move, metadata, apply"))
 	}
 }
 
