@@ -116,9 +116,11 @@ awl apply --input /tmp/awl-request.json --json
 - Each member runs in order against the staged document state.
 - Ordinary member failures do **not** automatically roll back successful sibling members: a composite can return `status: partial` and exit 3. Do not call a partial result fully successful.
 - One `metadata` member can contain multiple edits; that member's document update is staged all-or-nothing on failure. This is **not** an all-or-nothing promise for an entire multi-member `apply`.
-- Requests are audited in local Git; outcomes and request IDs are observable through the JSON response.
+- Requests are audited in local Git; outcomes and request IDs are observable in both text and JSON responses.
 
 ## Responses, retries, and failures
+
+Plain text is the default for direct human and agent comprehension. Operational results report the overall status, project and request ID when available, local commit and document tree, replay information, and each member outcome in request order. Remote branch and verified remote commit are shown when present in the result. Failed members include their error code and diagnostic; early validation or configuration errors remain on stderr. The text layout is not a machine-readable protocol: scripts should use `--json`. Raw document reads, path-per-line listings and typed metadata handling are unchanged.
 
 Current CLI exit codes:
 
@@ -134,7 +136,7 @@ Mutation JSON generally contains `status`, `project`, `request_id`, `commit`, `d
 - On an identical request replay, `replayed: true` accompanies the recorded result. The original `status` (for example, `applied`), `members`, `commit`, and `document_tree` are returned; `status` does **not** change to `replayed`, and replay does not publish a new commit.
 - The `revision` returned by `ls`, `read`, or `metadata get` identifies the current managed commit. A failed or no-op mutation may publish an audit-only commit and advance that revision while leaving the `document_tree` and document bytes unchanged. Verify content preservation with the tree identifier and/or a readback comparison, not an unchanged revision.
 
-- Check **both exit code and member statuses**; do not equate `commit` with a changed document tree.
+- Check **both exit code and member statuses**; do not equate `local_commit` (text) or `commit` (JSON) with a changed document tree.
 - For ambiguous outcomes (e.g. `PUBLICATION_OUTCOME_UNKNOWN`), inspect state and retry the **same request ID and bytes**, not a new request.
 - For `CONCURRENT_REQUEST_CONFLICT`, reread before deciding on an action. Never silently overwrite the winner.
 ### Explicit Git remote sync
@@ -149,7 +151,7 @@ awl sync --json
 - If the remote is ahead in the same history, the managed local ref is advanced conditionally. If local and remote both changed independently, sync returns `SYNC_DIVERGED` and preserves accepted local history. This initial slice does not merge; `--allow-unrelated-histories` is not yet supported.
 - The current importer validates linear `AWL-AUDIT-V1` histories, recognized empty roots, unique request IDs and ordinary Markdown blobs. It rejects unsupported merge commits, foreign paths or unsupported history rather than normalizing user data.
 - After a push, the remote ref is read back before publication is confirmed. A failed or lost push response whose outcome cannot be observed returns `SYNC_OUTCOME_UNKNOWN`; retry `awl sync` explicitly. A last-verified remote Git reference blocks silent branch deletion or non-descendant rewrites. Sync does not create a user request-audit commit.
-- JSON reports `status`, `project`, `commit` (local), `remote_commit` and `remote_branch`; expected statuses include `published`, `up_to_date`, `fast_forwarded`, `adopted` and `local_pending`. Error JSON has `status:error` and a structured error code.
+- Text and JSON expose the available local and remote commit context; JSON reports `status`, `project`, `commit` (local), `remote_commit` and `remote_branch`; expected statuses include `published`, `up_to_date`, `fast_forwarded`, `adopted` and `local_pending`. Error JSON has `status:error` and a structured error code.
 - Project authentication, Git hosting authorization, SSH agent configuration and remote repository access are provided by Git; `awl` does not store credentials. Remote transport failures do not invalidate successful offline writes.
 - `awl sync` and out-of-repository project discovery are separate concerns; only the latter remains unavailable.
 
