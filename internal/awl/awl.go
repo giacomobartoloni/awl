@@ -232,11 +232,7 @@ func (c *cli) emit(r result) int {
 			return n
 		}
 	} else {
-		fmt.Fprintf(c.stdout, "%s", r.Status)
-		if r.Commit != "" {
-			fmt.Fprintf(c.stdout, " %s", r.Commit)
-		}
-		fmt.Fprintln(c.stdout)
+		writeTextResult(c.stdout, r)
 	}
 	if r.Status == "partial" {
 		return 3
