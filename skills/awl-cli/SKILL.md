@@ -9,17 +9,19 @@ Use `awl` to manage Markdown documents associated with the current project. The 
 
 ## Quick reference
 
+Prefer plain text for agent-driven interactions: it reports operation outcomes and context without requiring JSON decoding. Use `--json` for programmatic consumers and when inspecting structured metadata, exact project/revision information, or typed values.
+
 | Task | Command |
 | --- | --- |
 | Inspect CLI | `awl --help`, `awl --version` |
 | Command help | `awl help COMMAND` |
 | Check project | `awl ls --json` |
 | List/read documents | `awl ls [DIRECTORY]`, `awl read DOCUMENT.md` |
-| Create document | `awl create DOCUMENT.md --input FILE --json` |
-| Edit body | `awl edit DOCUMENT.md --input FILE --json` |
-| Move document | `awl move SOURCE.md DESTINATION.md --json` |
+| Create document | `awl create DOCUMENT.md --input FILE` |
+| Edit body | `awl edit DOCUMENT.md --input FILE` |
+| Move document | `awl move SOURCE.md DESTINATION.md` |
 | Edit frontmatter | `awl metadata get/set/insert/remove ...` |
-| Ordered requests | `awl apply --input FILE --json` |
+| Ordered requests | `awl apply --input FILE` |
 
 ## Safe operating procedure
 
@@ -28,7 +30,7 @@ Use `awl` to manage Markdown documents associated with the current project. The 
 3. Read the target document or YAML pointer before editing. Mutations require a Git author identity.
 4. Use the narrowest supported command. `edit` replaces one unique exact match in the Markdown **body**; `metadata` handles supported frontmatter changes. `create` never overwrites an existing document. `move` refuses an occupied destination and does not rewrite Markdown links or frontmatter.
 5. Supply a stable `--request-id` for retriable writes. Retry an ambiguous operation only with its **original request ID and identical payload**; inspect current state first.
-6. Check exit code, response `status`, `members` and errors; read back the document to verify changes. A failed or no-op request may still create an audit commit without changing document content.
+6. Check the exit code, overall status, every reported operation outcome and error; read back the document to verify changes. A failed or no-op request may still create an audit commit without changing document content. Text output is intended for direct comprehension, not as a stable parsing format.
 
 ## Limits and common mistakes
 
