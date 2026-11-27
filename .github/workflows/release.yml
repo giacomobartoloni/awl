@@ -5,6 +5,8 @@ on:
     paths:
       - .goreleaser.yaml
       - .github/workflows/release.yml
+      - .github/workflows/update-homebrew-tap.yml
+      - tools/homebrew-tap/**
       - go.mod
       - go.sum
       - cmd/**
@@ -84,3 +86,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew:
+    name: Propose Homebrew tap update
+    if: github.event_name == 'push' && github.repository == 'giacomobartoloni/awl'
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-homebrew-tap.yml
+    secrets:
+      AWL_TAP_APP_PRIVATE_KEY: ${{ secrets.AWL_TAP_APP_PRIVATE_KEY }}
