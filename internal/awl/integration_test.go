@@ -18,6 +18,13 @@ type testCLI struct{ Binary, Source, Data string }
 func fixture(t *testing.T) testCLI {
 	t.Helper()
 	root := t.TempDir()
+	// Canonicalize the temporary root on platforms where the system temp
+	// directory is itself a symlink (e.g. macOS /var -> /private/var).
+	// Git reports canonical paths, so tests must use the same form to avoid
+	// spurious symlink-redirect mismatches.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	src := filepath.Join(root, "source")
 	if err := os.Mkdir(src, 0700); err != nil {
 		t.Fatal(err)
@@ -51,6 +58,26 @@ func (c testCLI) call(input []byte, args ...string) (int, []byte, string) {
 	cmd.Dir = c.Source
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+c.Data)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	e := cmd.Run()
+	if e == nil {
+		return 0, stdout.Bytes(), stderr.String()
+	}
+	if x, ok := e.(*exec.ExitError); ok {
+		return x.ExitCode(), stdout.Bytes(), stderr.String()
+	}
+	return 127, stdout.Bytes(), e.Error() + stderr.String()
+}
+// callWithEnv runs the CLI with additional environment variables, preserving
+// the standard fixture environment.
+func (c testCLI) callWithEnv(env []string, input []byte, args ...string) (int, []byte, string) {
+	cmd := exec.Command(c.Binary, args...)
+	cmd.Dir = c.Source
+	cmd.Stdin = bytes.NewReader(input)
+	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+c.Data)
+	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -510,7 +537,8 @@ func TestReadAndRemoteAddDoNotRequireWriterIdentity(t *testing.T) {
 	if added.Status != "remote_added" {
 		t.Fatalf("identity-free remote config: %+v", added)
 	}
-	code, out, _ := c.call([]byte("New content"), "create", "Docs/new.md", "--json")
+	home := t.TempDir()
+	code, out, _ := c.callWithEnv([]string{"HOME=" + home}, []byte("New content"), "create", "Docs/new.md", "--json")
 	if code == 0 || !bytes.Contains(out, []byte("IDENTITY_UNAVAILABLE")) {
 		t.Fatalf("write without attribution succeeded: %d %s", code, out)
 	}
