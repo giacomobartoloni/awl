@@ -1,0 +1,97 @@
+name: Propose Homebrew tap update
+
+on:
+  workflow_call:
+    secrets:
+      AWL_TAP_APP_PRIVATE_KEY:
+        required: false
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/update-homebrew-tap.yml
+      - .github/workflows/release.yml
+      - tools/homebrew-tap/**
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+      - run: node --test tools/homebrew-tap/update-formula.test.mjs
+
+  propose:
+    if: github.repository == 'giacomobartoloni/awl' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: awl-homebrew-tap-update
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: giacomobartoloni/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+      - name: Select stable release and verify all four archives
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/homebrew-tap/update-formula.mjs homebrew-tap/Formula/awl.rb homebrew-tap/README.md
+      - name: Create scoped tap GitHub App token
+        if: steps.prepare.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.AWL_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AWL_TAP_APP_PRIVATE_KEY }}
+          owner: giacomobartoloni
+          repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Guard existing automation branch and PR
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          TAP_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAP_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          AWL_TARGET_VERSION: ${{ steps.prepare.outputs.version }}
+        run: node tools/homebrew-tap/update-formula.mjs --guard
+      - name: Open or refresh reviewed tap PR
+        if: steps.prepare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch-token: ${{ steps.app-token.outputs.token }}
+          path: homebrew-tap
+          base: main
+          branch: automation/update-awl
+          add-paths: |
+            Formula/awl.rb
+            README.md
+          commit-message: "chore: update awl formula to v${{ steps.prepare.outputs.version }}"
+          title: "chore: update awl formula to v${{ steps.prepare.outputs.version }}"
+          body: |
+            <!-- awl Tap Automation -->
+            Proposes the latest stable published awl CLI release:
+            ${{ steps.prepare.outputs.release_url }}
+
+            All four macOS/Linux archives were downloaded and SHA-256 checked
+            against checksums.txt and available GitHub asset digests.
+            The formula and its README version are the only intended changes.
+            Human review and tap CI are required before manual merge.
