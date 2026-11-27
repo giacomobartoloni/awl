@@ -70,6 +70,7 @@ func (c testCLI) call(input []byte, args ...string) (int, []byte, string) {
 	}
 	return 127, stdout.Bytes(), e.Error() + stderr.String()
 }
+
 // callWithEnv runs the CLI with additional environment variables, preserving
 // the standard fixture environment.
 func (c testCLI) callWithEnv(env []string, input []byte, args ...string) (int, []byte, string) {
